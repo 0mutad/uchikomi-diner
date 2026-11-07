@@ -158,28 +158,28 @@ const DISHES = (() => {
 
 const DISH_BY_ID = Object.fromEntries(DISHES.map((d) => [d.id, d]));
 
-/* ① 店の設備強化。数字は遊びながら決める（仮） */
+/* ① 店の設備強化。強化するほど値段が大きく上がる（数字は遊びながら調整） */
 const UPGRADES = [
   {
     id: 'fridge', name: '冷蔵庫', icon: '🧊',
     desc: 'ためておける文字の数',
-    value: (lv) => 1000 + lv * 500,
+    value: (lv) => 300 + lv * 100,
     unit: '文字',
-    cost: (lv) => Math.round(120 * Math.pow(1.6, lv)),
+    cost: (lv) => Math.round(500 * Math.pow(2.2, lv)),
   },
   {
     id: 'stove', name: '調理台', icon: '🔥',
     desc: '1回の営業で作れる料理の数',
-    value: (lv) => 30 + lv * 10,
+    value: (lv) => 20 + lv * 5,
     unit: '皿',
-    cost: (lv) => Math.round(150 * Math.pow(1.7, lv)),
+    cost: (lv) => Math.round(800 * Math.pow(2.3, lv)),
   },
   {
     id: 'sign', name: '看板', icon: '🏮',
     desc: 'すべての料理の売値',
     value: (lv) => 100 + lv * 10,
     unit: '%',
-    cost: (lv) => Math.round(200 * Math.pow(1.8, lv)),
+    cost: (lv) => Math.round(1000 * Math.pow(2.5, lv)),
   },
 ];
 
