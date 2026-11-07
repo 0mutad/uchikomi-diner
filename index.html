@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>うちこみ食堂</title>
+<link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+
+<div id="panel"></div>
+
+<div id="app">
+  <canvas id="scene"></canvas>
+  <button id="btn-open" class="open-btn">🍳 営業する</button>
+  <div id="hud">
+    <div class="hud-left">
+      <span class="stock">🧺 <b id="stock">0</b><span class="cap">/<span id="cap">300</span></span></span>
+      <span class="today">今日 <span id="today">0</span>打</span>
+      <span class="notice" id="notice"></span>
+    </div>
+    <div class="hud-right">
+      <span class="money">🪙 <span id="money">0</span></span>
+      <button id="btn-letters" title="ためた文字">🔤</button>
+      <button id="btn-upgrade" title="店の設備">🔧</button>
+      <button id="btn-book" title="図鑑">📖</button>
+      <button id="btn-quit" class="quit" title="終了">×</button>
+    </div>
+  </div>
+</div>
+
+<script src="src/data.js"></script>
+<script src="src/game.js"></script>
+<script src="src/desktop.js"></script>
+</body>
+</html>

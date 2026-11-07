@@ -1,0 +1,17 @@
+{
+  "name": "uchikomi-diner",
+  "version": "0.1.0",
+  "description": "打った文字で料理を作る、画面右下に常駐する食堂ゲーム",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "preview": "node tools/serve.js"
+  },
+  "dependencies": {
+    "uiohook-napi": "1.5.4"
+  },
+  "devDependencies": {
+    "electron": "45.2.3"
+  }
+}
