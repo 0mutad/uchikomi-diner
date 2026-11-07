@@ -553,11 +553,43 @@
   const flyers = [];       // 料理人へ吸い込まれる文字
   let gulp = 0;            // 料理人が吸い込んだときの弾み
 
+  /* 文字を料理人へ飛ばす。仕込み中はキーから、営業中は店の床から厨房の料理人へ */
   function spawnLetter(ch) {
     flash[ch] = 0.35;
-    if (serving || flyers.length > 50) return;
-    const k = keyPos[ch];
-    flyers.push({ ch, sx: k.x + KEY_W / 2, sy: k.y + KEY_H / 2, t: 0, dur: 0.55 + Math.random() * 0.25, rare: RARE.has(ch) });
+    if (flyers.length > 50) return;
+    const f = { ch, t: 0, dur: 0.55 + Math.random() * 0.25, rare: RARE.has(ch) };
+    if (serving) {
+      Object.assign(f, { sx: 200 + Math.random() * 250, sy: 150, tx: 84, ty: 82, dur: f.dur + 0.3 });
+    } else {
+      const k = keyPos[ch];
+      Object.assign(f, { sx: k.x + KEY_W / 2, sy: k.y + KEY_H / 2, tx: PREP_CHEF.x + 4, ty: PREP_CHEF.foot - 26 });
+    }
+    flyers.push(f);
+  }
+
+  function drawFlyers(dt) {
+    gulp = Math.max(0, gulp - dt * 4);
+    for (let i = flyers.length - 1; i >= 0; i--) {
+      const f = flyers[i];
+      f.t += dt;
+      const k = Math.min(1, f.t / f.dur);
+      const e = k * k;   // 吸い込まれるように加速
+      const x = f.sx + (f.tx - f.sx) * e;
+      const y = f.sy + (f.ty - f.sy) * e - Math.sin(k * Math.PI) * 26;
+      const size = 14 - e * 7;
+      ctx.globalAlpha = 1 - e * 0.5;
+      text(f.ch, x, y, { size, bold: true, align: 'center', color: f.rare ? '#ffd166' : '#ffffff', font: 'Consolas, monospace' });
+      ctx.globalAlpha = 1;
+      if (k >= 1) { flyers.splice(i, 1); gulp = Math.min(1, gulp + 0.25); }
+    }
+  }
+
+  function glow(x, y) {
+    if (gulp <= 0) return;
+    ctx.fillStyle = `rgba(255, 209, 102, ${gulp * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 18 + gulp * 6, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   function drawPrep(t, dt) {
@@ -598,33 +630,10 @@
     }
 
     // 料理人（吸い込むと弾む）
-    gulp = Math.max(0, gulp - dt * 4);
     const bob = Math.sin(t * 2) * 0.8 - gulp * 4;
-    // 吸い込みの光
-    if (gulp > 0) {
-      ctx.fillStyle = `rgba(255, 209, 102, ${gulp * 0.35})`;
-      ctx.beginPath();
-      ctx.arc(PREP_CHEF.x, PREP_CHEF.foot - 22, 18 + gulp * 6, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    glow(PREP_CHEF.x, PREP_CHEF.foot - 22);   // 吸い込みの光
     person(PREP_CHEF.x, PREP_CHEF.foot + bob, CHEF_LOOK, { chef: true, face: 1 });
-
-    // 吸い込まれる文字
-    for (let i = flyers.length - 1; i >= 0; i--) {
-      const f = flyers[i];
-      f.t += dt;
-      const k = Math.min(1, f.t / f.dur);
-      const e = k * k;   // 吸い込まれるように加速
-      const tx = PREP_CHEF.x + 4;
-      const ty = PREP_CHEF.foot - 26;
-      const x = f.sx + (tx - f.sx) * e;
-      const y = f.sy + (ty - f.sy) * e - Math.sin(k * Math.PI) * 26;
-      const size = 14 - e * 7;
-      ctx.globalAlpha = 1 - e * 0.5;
-      text(f.ch, x, y, { size, bold: true, align: 'center', color: f.rare ? '#ffd166' : '#ffffff', font: 'Consolas, monospace' });
-      ctx.globalAlpha = 1;
-      if (k >= 1) { flyers.splice(i, 1); gulp = Math.min(1, gulp + 0.25); }
-    }
+    drawFlyers(dt);
   }
 
   /* ===== 営業（お店） ===== */
@@ -754,7 +763,7 @@
     text(str, x, y - 2, { size: 10, align: 'center', color: '#3a2619' });
   }
 
-  function drawServe(t) {
+  function drawServe(t, dt) {
     // 壁と床
     rect(0, 0, W, 104, '#6b4a33');
     for (let x = 0; x < W; x += 24) rect(x, 0, 1, 104, 'rgba(0,0,0,0.12)');
@@ -782,6 +791,7 @@
     rect(18, 56, 16, 4, '#555');
     const cooking = !!kitchen.cooking;
     const flip = cooking ? Math.abs(Math.sin(t * 10)) * 4 : 0;
+    glow(80, 88);
     person(80, 110 - flip * 0.3, CHEF_LOOK, { chef: true, face: 1 });
     if (cooking) {
       rect(93, 78 - flip, 12, 3, '#2b2b2b');    // フライパン
@@ -814,6 +824,7 @@
       if (g.state === 'eat' && Math.sin(t * 12) > 0) rect(g.x + 5, 116, 2, 2, '#ffffff');
     }
     person(staff.x, 146, STAFF_LOOK, { walk: staff.walk, carry: staff.carry ? { color: dishColor(staff.carry.dish) } : null, face: staff.face || 1 });
+    drawFlyers(dt);   // 営業中に打った文字も料理人へ集まる
   }
 
   function drawFloats(dt) {
@@ -841,7 +852,7 @@
       if (serving) {
         // 描画の回数が少なくても時間どおりに進むよう、0.05秒ずつ刻んで進める
         for (let left = step; left > 0 && serving; left -= 0.05) updateServe(Math.min(0.05, left));
-        if (serving) drawServe(now / 1000);
+        if (serving) drawServe(now / 1000, step);
         else drawPrep(now / 1000, step);
       } else {
         drawPrep(now / 1000, step);

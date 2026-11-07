@@ -163,14 +163,14 @@ const UPGRADES = [
   {
     id: 'fridge', name: '冷蔵庫', icon: '🧊',
     desc: 'ためておける文字の数',
-    value: (lv) => 300 + lv * 150,
+    value: (lv) => 1000 + lv * 500,
     unit: '文字',
     cost: (lv) => Math.round(120 * Math.pow(1.6, lv)),
   },
   {
     id: 'stove', name: '調理台', icon: '🔥',
     desc: '1回の営業で作れる料理の数',
-    value: (lv) => 20 + lv * 5,
+    value: (lv) => 30 + lv * 10,
     unit: '皿',
     cost: (lv) => Math.round(150 * Math.pow(1.7, lv)),
   },
