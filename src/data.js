@@ -168,18 +168,19 @@ const UPGRADES = [
     cost: (lv) => Math.round(500 * Math.pow(2.2, lv)),
   },
   {
-    id: 'stove', name: '調理台', icon: '🔥',
-    desc: '1回の営業で作れる料理の数',
-    value: (lv) => 20 + lv * 5,
+    // 記憶量: 1回に予約できる料理の数（保存データとの互換のため id は stove のまま）
+    id: 'stove', name: '記憶量', icon: '🧠',
+    desc: '1回に予約できる料理の数',
+    value: (lv) => 15 + lv,
     unit: '皿',
-    cost: (lv) => Math.round(800 * Math.pow(2.3, lv)),
+    cost: (lv) => Math.round(400 * Math.pow(1.18, lv)),
   },
   {
     id: 'knife', name: '包丁', icon: '🔪',
     desc: '1皿を作る時間',
-    value: (lv) => Math.round(10 * Math.pow(0.85, lv) * 10) / 10,
+    value: (lv) => Math.max(3, Math.round((10 - lv * 0.1) * 10) / 10),   // 1強化で0.1秒短く（最短3秒）
     unit: '秒',
-    cost: (lv) => Math.round(600 * Math.pow(2.3, lv)),
+    cost: (lv) => Math.round(500 * Math.pow(1.12, lv)),
   },
   {
     id: 'sign', name: '看板', icon: '🏮',

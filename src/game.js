@@ -566,7 +566,7 @@
 
     const count = [...cookPlan.values()].reduce((s, n) => s + n, 0);
     const total = planTotal(cookPlan);
-    return `${head('🍳 営業', `調理台 ${slots}皿まで ・ 手持ち ${stock()}文字`)}
+    return `${head('🍳 営業', `記憶量 ${slots}皿まで ・ 手持ち ${stock()}文字`)}
       <div class="tabs">${tabs}</div>
       <div class="panel-body">${body}</div>
       <div class="panel-foot">
