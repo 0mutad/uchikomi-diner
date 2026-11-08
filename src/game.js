@@ -598,7 +598,7 @@
   let view = 'keyboard';
   function setView(v) {
     view = v;
-    if (v === 'eng') open('eng');
+    if (v === 'eng') { flyers.length = 0; open('eng'); }
     else if (openPanel === 'eng') close();
     paintHud();
   }
@@ -709,10 +709,9 @@
     flash[ch] = 0.35;
     if (flyers.length > 50) return;
     const f = { ch, t: 0, dur: 0.55 + Math.random() * 0.25, rare: RARE.has(ch) };
+    if (view === 'eng') return;   // 工学の画面では文字を飛ばさない（数は裏で増える）
     if (view === 'restaurant') {
       Object.assign(f, { sx: 200 + Math.random() * 250, sy: 150, tx: 84, ty: 82, dur: f.dur + 0.3 });
-    } else if (view === 'eng') {
-      Object.assign(f, { sx: 60 + Math.random() * 360, sy: 40, tx: 240, ty: 146, dur: f.dur + 0.2 });
     } else {
       const k = keyPos[ch];
       Object.assign(f, { sx: k.x + KEY_W / 2, sy: k.y + KEY_H / 2, tx: PREP_CHEF.x + 4, ty: PREP_CHEF.foot - 26 });
@@ -1037,8 +1036,6 @@
       text(f.name, x + 32, 126, { size: 9, align: 'center', color: '#f3ece2' });
       text(`Lv.${lv}`, x + 32, 140, { size: 9, align: 'center', color: '#ffd166', font: 'Consolas, monospace' });
     });
-
-    drawFlyers(dt);
   }
 
   function drawFloats(dt) {
