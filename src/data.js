@@ -175,6 +175,13 @@ const UPGRADES = [
     cost: (lv) => Math.round(800 * Math.pow(2.3, lv)),
   },
   {
+    id: 'knife', name: '包丁', icon: '🔪',
+    desc: '1皿を作る時間',
+    value: (lv) => Math.round(10 * Math.pow(0.85, lv) * 10) / 10,
+    unit: '秒',
+    cost: (lv) => Math.round(600 * Math.pow(2.3, lv)),
+  },
+  {
     id: 'sign', name: '看板', icon: '🏮',
     desc: 'すべての料理の売値',
     value: (lv) => 100 + lv * 10,
@@ -228,3 +235,11 @@ const FACILITIES = [
     cost: (lv) => Math.round(3000 * Math.pow(2.3, lv)),
   },
 ];
+
+/* 工学のマップ。空き枠に施設を建てる。枠はお金で増やす（いずれショップ・ステージ報酬でも増やす） */
+const ENG_SLOTS_MAX = 8;
+const ENG_SLOTS_START = 3;
+const slotCost = (count) => Math.round(3000 * Math.pow(1.8, count - ENG_SLOTS_START));   // count = 今の枠の数
+// 同じ施設を建てられる数。効果は同じ施設のレベルの合計で決まる
+const FAC_LIMIT = { converter: 2, refiner: 1, spice: 2, tower: 1, washer: 2, prepper: 3 };
+const REMOVE_REFUND = 0.5;   // 撤去したときに戻るお金（かけた額の割合）

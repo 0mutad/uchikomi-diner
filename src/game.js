@@ -16,13 +16,29 @@
       coins: 0,
       sales: 0,                 // 累計売上（次の国へ進む目標に使う予定）
       cooked: {},               // 料理ごとに作った数 { sushi: 3, ... }
-      upg: { fridge: 0, stove: 0, sign: 0 },
+      upg: { fridge: 0, stove: 0, sign: 0, knife: 0 },
       today: { day: '', keys: 0 },
       totalKeys: 0,
       introSeen: false,
-      eng: { unlocked: false, fac: {} },   // ⚙ 工学（施設ごとのレベル）
+      eng: { unlocked: false, slots: Array(ENG_SLOTS_MAX).fill(null), slotCount: ENG_SLOTS_START },   // ⚙ 工学（枠ごとに { fac, lv } か null）
       prepCount: 0,                        // 自動仕込み機: 次の文字までの打鍵数
     };
+  }
+
+  // 工学の保存データ。前の形（施設ごとのレベル fac）なら枠に並べ直す
+  function loadEng(base, e) {
+    if (!e) return base;
+    const out = { ...base, ...e };
+    const slots = Array.isArray(e.slots) ? [...e.slots] : Array(ENG_SLOTS_MAX).fill(null);
+    while (slots.length < ENG_SLOTS_MAX) slots.push(null);
+    if (!Array.isArray(e.slots) && e.fac) {
+      let i = 0;
+      for (const [id, lv] of Object.entries(e.fac)) if (lv > 0 && i < ENG_SLOTS_MAX) slots[i++] = { fac: id, lv };
+      out.slotCount = Math.max(ENG_SLOTS_START, i);
+    }
+    out.slots = slots;
+    delete out.fac;
+    return out;
   }
 
   function load() {
@@ -39,7 +55,7 @@
         upg: { ...base.upg, ...s.upg },
         today: { ...base.today, ...s.today },
         cooked: { ...s.cooked },
-        eng: { ...base.eng, ...s.eng, fac: { ...(s.eng && s.eng.fac) } },
+        eng: loadEng(base.eng, s.eng),
       };
     } catch (e) { return fresh(); }
   }
@@ -87,7 +103,10 @@
   const stoveMax = () => upgValue('stove');
   const stock = () => LETTERS.reduce((s, c) => s + state.letters[c], 0);
 
-  const facLv = (id) => (state.eng.unlocked ? state.eng.fac[id] || 0 : 0);
+  // 同じ施設のレベルの合計（工学を買っていなければ 0）
+  const facLv = (id) => (state.eng.unlocked ? state.eng.slots.reduce((n, s) => n + (s && s.fac === id ? s.lv : 0), 0) : 0);
+  const facCount = (id) => state.eng.slots.filter((s) => s && s.fac === id).length;
+  const facSpent = (f, lv) => { let n = 0; for (let i = 0; i < lv; i++) n += f.cost(i); return n; };
   const popularBonus = () => POPULAR_BONUS + facLv('tower') * 0.1;
 
   function sellPrice(d) {
@@ -407,39 +426,94 @@
     return `${head('店の設備', `🪙 ${state.coins.toLocaleString()}`)}<div class="panel-body">${rows}${eng}</div>`;
   }
 
-  /* ⚙ 工学のパネル: 施設の購入・強化と、文字の変換 */
+  /* ⚙ 工学のパネル: マップで選んだ枠に施設を建てる・強化する・撤去する、文字の変換 */
   const convTarget = { converter: 's', refiner: 'c' };
+  let engSel = null;   // マップで選んでいる枠の番号
+
+  function convControls(id) {
+    const { targets } = convSpec(id);
+    const opts = targets.map((c) => `<option value="${c}" ${convTarget[id] === c ? 'selected' : ''}>${c}（${state.letters[c]}）</option>`).join('');
+    const can = convMax(id, convTarget[id]);
+    return `<div class="conv">変換先 <select data-conv="${id}">${opts}</select>
+      <button class="btn" data-act="conv" data-id="${id}" data-n="1" ${can ? '' : 'disabled'}>1個</button>
+      <button class="btn" data-act="conv" data-id="${id}" data-n="max" ${can ? '' : 'disabled'}>できるだけ（${can}）</button></div>`;
+  }
+
   function renderEng() {
     if (!state.eng.unlocked) {
       return `${head('⚙ 工学')}
         <div class="panel-body"><div class="empty">🔒 工学はまだ使えません。<br>
         🔧 店の設備から 🪙 ${ENGINEERING_COST.toLocaleString()} で購入するとアンロックされます。</div></div>`;
     }
-    const rows = FACILITIES.map((f) => {
-      const lv = state.eng.fac[f.id] || 0;
-      const cost = f.cost(lv);
-      const maxed = lv >= FAC_MAX_LV;
-      const now = lv ? f.desc(lv) : '未設置';
-      const next = maxed ? '最大レベル' : `→ ${f.desc(lv + 1)}`;
-      let conv = '';
-      if (lv && (f.id === 'converter' || f.id === 'refiner')) {
-        const { targets } = convSpec(f.id);
-        const opts = targets.map((c) => `<option value="${c}" ${convTarget[f.id] === c ? 'selected' : ''}>${c}（${state.letters[c]}）</option>`).join('');
-        const can = convMax(f.id, convTarget[f.id]);
-        conv = `<div class="conv">変換先 <select data-conv="${f.id}">${opts}</select>
-          <button class="btn" data-act="conv" data-id="${f.id}" data-n="1" ${can ? '' : 'disabled'}>1個</button>
-          <button class="btn" data-act="conv" data-id="${f.id}" data-n="max" ${can ? '' : 'disabled'}>できるだけ（${can}）</button></div>`;
-      }
-      return `<div class="upg fac">
-        <div class="icon">${f.icon}</div>
-        <div><div class="t">${f.name} <span class="count">${lv ? `Lv.${lv}` : ''} ・ ${f.kind}</span></div>
-          <div class="d">${now}<br><span class="next">${next}</span></div>${conv}</div>
-        ${maxed ? '<span class="count">MAX</span>'
-          : `<button class="btn primary" data-act="fac-buy" data-id="${f.id}" ${state.coins < cost || serving ? 'disabled' : ''}>${lv ? '強化' : '設置'}<br>🪙 ${cost.toLocaleString()}</button>`}
-      </div>`;
+    const e = state.eng;
+    const used = e.slots.slice(0, e.slotCount).filter(Boolean).length;
+    const money = Math.max(0, state.coins - unpaid);
+    const h = head('⚙ 工学', `枠 ${used} / ${e.slotCount} ・ 🪙 ${money.toLocaleString()}`);
+    const back = '<button class="btn" data-act="eng-back">← 一覧へ</button>';
+    const busy = serving ? '<p class="hint">営業中は建てる・強化することができません（変換はできます）</p>' : '';
+
+    // 枠が増やせるところ
+    if (engSel != null && engSel >= e.slotCount) {
+      const cost = slotCost(e.slotCount);
+      return `${h}<div class="panel-body">
+        <div class="upg"><div class="icon">🧱</div>
+          <div><div class="t">空き枠を増やす <span class="count">${e.slotCount} → ${e.slotCount + 1} 枠</span></div>
+          <div class="d">施設を建てられる場所が1つ増えます（いずれショップやステージの報酬でも増える予定）</div></div>
+          <button class="btn primary" data-act="slot-buy" ${money < cost || serving ? 'disabled' : ''}>🪙 ${cost.toLocaleString()}</button></div>
+        ${busy}</div><div class="panel-foot"><span></span>${back}</div>`;
+    }
+
+    // 空き枠: 建てる施設を選ぶ
+    if (engSel != null && !e.slots[engSel]) {
+      const rows = FACILITIES.map((f) => {
+        const n = facCount(f.id);
+        const full = n >= FAC_LIMIT[f.id];
+        const cost = f.cost(0);
+        return `<div class="upg fac${full ? ' off' : ''}"><div class="icon">${f.icon}</div>
+          <div><div class="t">${f.name} <span class="count">${f.kind} ・ ${n} / ${FAC_LIMIT[f.id]} 個</span></div>
+          <div class="d">${f.desc(1)}</div></div>
+          ${full ? '<span class="count">上限</span>'
+            : `<button class="btn primary" data-act="build" data-id="${f.id}" ${money < cost || serving ? 'disabled' : ''}>建てる<br>🪙 ${cost.toLocaleString()}</button>`}
+        </div>`;
+      }).join('');
+      return `${h}<div class="panel-body"><p class="hint" style="margin:0 0 4px">空き枠 ${engSel + 1} に建てる施設を選んでください。同じ施設は上限の数まで建てられ、効果はレベルの合計になります。</p>${rows}${busy}</div>
+        <div class="panel-foot"><span></span>${back}</div>`;
+    }
+
+    // 建っている施設: 強化・撤去・変換
+    if (engSel != null) {
+      const s = e.slots[engSel];
+      const f = FACILITIES.find((x) => x.id === s.fac);
+      const maxed = s.lv >= FAC_MAX_LV;
+      const cost = f.cost(s.lv);
+      const total = facLv(f.id);
+      const refund = Math.round(facSpent(f, s.lv) * REMOVE_REFUND);
+      const sum = facCount(f.id) > 1 ? `<br>同じ施設が ${facCount(f.id)} 個あるので、効果は合計 Lv.${total}: ${f.desc(Math.min(total, 99))}` : '';
+      return `${h}<div class="panel-body">
+        <div class="upg fac"><div class="icon">${f.icon}</div>
+          <div><div class="t">${f.name} <span class="count">Lv.${s.lv} ・ ${f.kind}</span></div>
+          <div class="d">${f.desc(s.lv)}<br><span class="next">${maxed ? '最大レベル' : `強化すると → ${f.desc(s.lv + 1)}`}</span>${sum}</div>
+          ${f.id === 'converter' || f.id === 'refiner' ? convControls(f.id) : ''}</div>
+          ${maxed ? '<span class="count">MAX</span>'
+            : `<button class="btn primary" data-act="fac-up" ${money < cost || serving ? 'disabled' : ''}>強化<br>🪙 ${cost.toLocaleString()}</button>`}
+        </div>${busy}</div>
+        <div class="panel-foot"><button class="btn" data-act="fac-remove" ${serving ? 'disabled' : ''}>撤去（🪙 ${refund.toLocaleString()} 戻る）</button>${back}</div>`;
+    }
+
+    // 一覧
+    const rows = e.slots.slice(0, e.slotCount).map((s, i) => {
+      if (!s) return `<div class="upg"><div class="icon">⬚</div><div><div class="t">空き枠 ${i + 1}</div><div class="d">クリックして施設を建てる</div></div>
+        <button class="btn" data-act="slot-sel" data-i="${i}">建てる</button></div>`;
+      const f = FACILITIES.find((x) => x.id === s.fac);
+      return `<div class="upg fac"><div class="icon">${f.icon}</div>
+        <div><div class="t">${f.name} <span class="count">Lv.${s.lv}</span></div><div class="d">${f.desc(s.lv)}</div>
+        ${f.id === 'converter' || f.id === 'refiner' ? convControls(f.id) : ''}</div>
+        <button class="btn" data-act="slot-sel" data-i="${i}">詳しく</button></div>`;
     }).join('');
-    const placed = FACILITIES.filter((f) => state.eng.fac[f.id]).length;
-    return `${head('⚙ 工学', `施設 ${placed} / ${FACILITIES.length} ・ 🪙 ${Math.max(0, state.coins - unpaid).toLocaleString()}`)}<div class="panel-body">${rows}</div>`;
+    const more = e.slotCount < ENG_SLOTS_MAX
+      ? `<div class="upg"><div class="icon">🧱</div><div><div class="t">空き枠を増やす</div><div class="d">${e.slotCount} → ${e.slotCount + 1} 枠</div></div>
+        <button class="btn primary" data-act="slot-buy" ${money < slotCost(e.slotCount) || serving ? 'disabled' : ''}>🪙 ${slotCost(e.slotCount).toLocaleString()}</button></div>` : '';
+    return `${h}<div class="panel-body"><p class="hint" style="margin:0 0 4px">下のマップの枠をクリックしても選べます。</p>${rows}${more}${busy}</div>`;
   }
 
   function renderBook() {
@@ -566,18 +640,46 @@
       setView('eng');
     } else if (act === 'go-eng') {
       setView('eng');
-    } else if (act === 'fac-buy') {
-      if (serving) return;
-      const f = FACILITIES.find((x) => x.id === id);
-      const lv = state.eng.fac[id] || 0;
-      const cost = f.cost(lv);
-      if (lv >= FAC_MAX_LV || state.coins < cost) return;
-      state.coins -= cost;
-      state.eng.fac[id] = lv + 1;
-      machinePop[id] = 1;
-      save();
+    } else if (act === 'eng-back') {
+      engSel = null;
       renderPanel();
-      paintHud();
+    } else if (act === 'slot-sel') {
+      engSel = Number(b.dataset.i);
+      renderPanel();
+    } else if (act === 'slot-buy') {
+      const cost = slotCost(state.eng.slotCount);
+      if (serving || state.eng.slotCount >= ENG_SLOTS_MAX || state.coins < cost) return;
+      state.coins -= cost;
+      engSel = state.eng.slotCount;
+      state.eng.slotCount++;
+      save(); renderPanel(); paintHud();
+    } else if (act === 'build') {
+      const f = FACILITIES.find((x) => x.id === id);
+      const cost = f.cost(0);
+      if (serving || engSel == null || state.eng.slots[engSel] || facCount(id) >= FAC_LIMIT[id] || state.coins < cost) return;
+      state.coins -= cost;
+      state.eng.slots[engSel] = { fac: id, lv: 1 };
+      machinePop[engSel] = 1;
+      save(); renderPanel(); paintHud();
+    } else if (act === 'fac-up') {
+      const sl = engSel != null && state.eng.slots[engSel];
+      if (serving || !sl) return;
+      const f = FACILITIES.find((x) => x.id === sl.fac);
+      const cost = f.cost(sl.lv);
+      if (sl.lv >= FAC_MAX_LV || state.coins < cost) return;
+      state.coins -= cost;
+      sl.lv++;
+      machinePop[engSel] = 1;
+      save(); renderPanel(); paintHud();
+    } else if (act === 'fac-remove') {
+      const sl = engSel != null && state.eng.slots[engSel];
+      if (serving || !sl) return;
+      const f = FACILITIES.find((x) => x.id === sl.fac);
+      const refund = Math.round(facSpent(f, sl.lv) * REMOVE_REFUND);
+      state.coins += refund;
+      state.eng.slots[engSel] = null;
+      floatText(`+${refund}`, 240, 60);
+      save(); renderPanel(); paintHud();
     } else if (act === 'conv') {
       const n = convert(id, convTarget[id], b.dataset.n === 'max' ? Infinity : 1);
       if (n) floatText(`${convTarget[id]} +${n}`, 120 + Math.random() * 240, 60, '#9ad1ff', '');
@@ -598,7 +700,7 @@
   let view = 'keyboard';
   function setView(v) {
     view = v;
-    if (v === 'eng') { flyers.length = 0; open('eng'); }
+    if (v === 'eng') { flyers.length = 0; engSel = null; open('eng'); }
     else if (openPanel === 'eng') close();
     paintHud();
   }
@@ -725,29 +827,21 @@
   function floatText(str, x, y, color = '#ffd166', suffix = ' 🪙') { floats.push({ str, x, y, t: 0, color, suffix }); }
 
   /* ===== 仕込み（PCのキーボード） ===== */
-  const KU = 24;          // キー1個ぶんの幅
-  const KEY_H = 22;
-  const KB_X = 108;
-  const KB_Y = 30;
-  // [表示, 幅(キー何個ぶん)]。a〜z 以外は飾り
-  const KB_ROWS = [
-    [['`', 1], ['1', 1], ['2', 1], ['3', 1], ['4', 1], ['5', 1], ['6', 1], ['7', 1], ['8', 1], ['9', 1], ['0', 1], ['-', 1], ['=', 1], ['BS', 2]],
-    [['Tab', 1.5], ...[...'qwertyuiop'].map((c) => [c, 1]), ['[', 1], [']', 1], ['\\', 1.5]],
-    [['Caps', 1.75], ...[...'asdfghjkl'].map((c) => [c, 1]), [';', 1], ["'", 1], ['Enter', 2.25]],
-    [['Shift', 2.25], ...[...'zxcvbnm'].map((c) => [c, 1]), [',', 1], ['.', 1], ['/', 1], ['Shift', 2.75]],
-    [['Ctrl', 1.25], ['Win', 1.25], ['Alt', 1.25], ['', 6.25], ['Alt', 1.25], ['Win', 1.25], ['Fn', 1.25], ['Ctrl', 1.25]],
-  ];
+  // アルファベットの部分だけ（シンプルな初期のキーボード。スキンはショップで買う予定）
+  const KU = 32;          // キー1個ぶんの幅
+  const KEY_H = 28;
+  const KB_X = 116;
+  const KB_Y = 44;
+  const KB_COLS = 10.75;  // 本体の幅（キー何個ぶん）
+  const KB_ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
+  const KB_SHIFT = [0, 0.25, 0.75];
   const KEYS = [];
   const keyPos = {};
-  KB_ROWS.forEach((row, r) => {
-    let x = KB_X;
-    for (const [label, u] of row) {
-      const k = { label, x, y: KB_Y + r * (KEY_H + 2), w: u * KU - 2, letter: label.length === 1 && LETTERS.includes(label) };
-      KEYS.push(k);
-      if (k.letter) keyPos[label] = { x: k.x + k.w / 2, y: k.y + KEY_H / 2 };
-      x += u * KU;
-    }
-  });
+  KB_ROWS.forEach((row, r) => [...row].forEach((ch, i) => {
+    const k = { label: ch, x: KB_X + (KB_SHIFT[r] + i) * KU, y: KB_Y + r * (KEY_H + 4), w: KU - 3, letter: true };
+    KEYS.push(k);
+    keyPos[ch] = { x: k.x + k.w / 2, y: k.y + KEY_H / 2 };
+  }));
   const PREP_CHEF = { x: 54, foot: 148 };
   const flash = {};        // キーが光る残り時間
   const flyers = [];       // 料理人へ吸い込まれる文字
@@ -820,19 +914,15 @@
     text(`本日の人気：${pop}`, KB_X, 18, { size: 10, bold: true, color: '#ffd166' });
 
     // キーボードの本体
-    rect(KB_X - 8, KB_Y - 6, 15 * KU + 14, 5 * (KEY_H + 2) + 12, '#1d1f24');
-    rect(KB_X - 8, KB_Y - 6, 15 * KU + 14, 2, '#3a3d45');
-    rect(KB_X - 8, KB_Y + 5 * (KEY_H + 2) + 4, 15 * KU + 14, 2, '#0f1013');
+    const bw = KB_COLS * KU + 14;
+    const bh = 3 * (KEY_H + 4) + 10;
+    rect(KB_X - 8, KB_Y - 6, bw, bh, '#1d1f24');
+    rect(KB_X - 8, KB_Y - 6, bw, 2, '#3a3d45');
+    rect(KB_X - 8, KB_Y - 6 + bh - 2, bw, 2, '#0f1013');
 
     // キー
     const max = Math.max(1, ...LETTERS.map((c) => state.letters[c]));
     for (const k of KEYS) {
-      if (!k.letter) {
-        rect(k.x, k.y, k.w, KEY_H, '#55555c');
-        rect(k.x, k.y, k.w, KEY_H - 4, '#77777f');
-        if (k.label) text(k.label, k.x + 3, k.y + 10, { size: 7, color: '#c4c4cc', font: 'Consolas, monospace' });
-        continue;
-      }
       const ch = k.label;
       const n = state.letters[ch];
       const f = Math.max(0, flash[ch] || 0);
@@ -844,8 +934,8 @@
       // ためた数が多いほど色が濃くなる
       rect(k.x, k.y + press, k.w, KEY_H - 4, `rgba(231, 111, 81, ${0.45 * (n / max)})`);
       if (f > 0) rect(k.x, k.y + press, k.w, KEY_H - 4, `rgba(255,255,255,${Math.min(0.9, f * 2.5)})`);
-      text(ch.toUpperCase(), k.x + 3, k.y + press + 10, { size: 10, bold: true, color: '#2d2925', font: 'Consolas, monospace' });
-      text(String(n), k.x + k.w - 2, k.y + press + 16, { size: 7, align: 'right', color: n ? '#5a3a2a' : 'rgba(45,41,37,0.35)', font: 'Consolas, monospace' });
+      text(ch.toUpperCase(), k.x + 4, k.y + press + 13, { size: 12, bold: true, color: '#2d2925', font: 'Consolas, monospace' });
+      text(String(n), k.x + k.w - 3, k.y + press + 23, { size: 9, align: 'right', color: n ? '#5a3a2a' : 'rgba(45,41,37,0.35)', font: 'Consolas, monospace' });
     }
 
     // 料理人（吸い込むと弾む）
@@ -874,6 +964,34 @@
   let ready = [];              // カウンターに置かれた料理（お客さん）
   const staff = { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, walk: 0, face: 1 };
 
+  /* 営業の流れ: お客さんはすでに席と行列にずらっと並んでいる。
+   * 厨房が1皿ずつ作り（最初は10秒。🔪包丁で短くなる）、店員が運び、食べたら払って帰る。
+   * 席が空くと行列の先頭が座る */
+  const cookTime = () => upgValue('knife');
+  const LINE_X = 456;
+  const LINE_FRONT_Y = 136;
+  const LINE_SHOW = 5;         // 行列に見せる人数
+  let line = [];               // 行列に並んでいる人の見た目
+
+  const randomLook = () => GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)];
+
+  function seatGuest(tb, fromLine) {
+    const [sx, sy] = seatOf(tb);
+    const g = {
+      dish: orders.shift(), table: tb, state: 'enter', t: 0, face: -1,
+      look: fromLine ? line.shift() || randomLook() : randomLook(),
+    };
+    if (fromLine) {
+      Object.assign(g, { x: LINE_X, y: LINE_FRONT_Y, path: [[LINE_X, AISLE_Y], [sx, AISLE_Y], [sx, sy]] });
+      if (orders.length > line.length) line.push(randomLook());
+    } else {
+      // 開店の時点ですでに座っている
+      Object.assign(g, { x: sx, y: sy, path: [], state: 'order', t: 0.3 + Math.random() * 0.8, face: 1 });
+    }
+    tb.guest = g;
+    guests.push(g);
+  }
+
   function startServe(rows) {
     orders = [];
     for (const { d, n } of rows) for (let i = 0; i < n; i++) orders.push(d);
@@ -891,7 +1009,9 @@
     kitchen.cooking = null;
     Object.assign(staff, { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, face: 1 });
     TABLES.forEach((tb) => { tb.guest = null; tb.dish = null; });
-    spawnWait = 0;
+    for (const tb of TABLES) if (orders.length) seatGuest(tb, false);
+    line = [];
+    for (let i = 0; i < Math.min(LINE_SHOW, orders.length); i++) line.push(randomLook());
     serving = true;
     setView('restaurant');
   }
@@ -901,6 +1021,7 @@
     unpaid = 0;
     orders = [];
     guests = [];
+    line = [];
     view = 'keyboard';
     open('result');
   }
@@ -927,26 +1048,10 @@
   const standOf = (tb) => [tb.x + 21, tb.y + 4];         // 店員は右の席の横に立つ
 
   function updateServe(dt) {
-    // お客さんが来る（空いている席があれば）
-    spawnWait -= dt;
-    const freeTables = TABLES.filter((tb) => !tb.guest);
-    if (orders.length && freeTables.length && spawnWait <= 0) {
-      const tb = freeTables[Math.floor(Math.random() * freeTables.length)];
-      const [sx, sy] = seatOf(tb);
-      const g = {
-        x: DOOR.x, y: DOOR.y, dish: orders.shift(), table: tb, state: 'enter', t: 0, face: -1,
-        path: [[DOOR.x, AISLE_Y], [sx, AISLE_Y], [sx, sy]],
-        look: GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)],
-      };
-      tb.guest = g;
-      guests.push(g);
-      spawnWait = 0.9;
-    }
-
     for (let i = guests.length - 1; i >= 0; i--) {
       const g = guests[i];
       if (g.state === 'enter') {
-        if (moveAlong(g, dt)) { g.state = 'order'; g.t = 0.8; g.face = 1; }
+        if (moveAlong(g, dt)) { g.state = 'order'; g.t = 0.6; g.face = 1; }
       } else if (g.state === 'order') {
         g.t -= dt;
         if (g.t <= 0) { g.state = 'wait'; kitchen.queue.push(g); }
@@ -957,10 +1062,12 @@
           unpaid = Math.max(0, unpaid - price);
           served++;
           floatText(`+${price}`, g.table.x, g.table.y - 18);
-          g.table.dish = null;
-          g.table.guest = null;
+          const tb = g.table;
+          tb.dish = null;
+          tb.guest = null;
           g.state = 'leave';
-          g.path = [[g.x, AISLE_Y], [DOOR.x, AISLE_Y], [DOOR.x, DOOR.y]];
+          g.path = [[g.x, AISLE_Y], [LINE_X - 14, AISLE_Y], [LINE_X - 14, DOOR.y]];
+          if (orders.length) seatGuest(tb, true);   // 行列の先頭が座る
           paintHud();
         }
       } else if (g.state === 'leave') {
@@ -968,8 +1075,8 @@
       }
     }
 
-    // 厨房: 1皿ずつ作る
-    if (!kitchen.cooking && kitchen.queue.length) { kitchen.cooking = kitchen.queue.shift(); kitchen.t = 0.8; }
+    // 厨房: 1皿ずつ時間をかけて作る
+    if (!kitchen.cooking && kitchen.queue.length) { kitchen.cooking = kitchen.queue.shift(); kitchen.t = cookTime(); }
     if (kitchen.cooking) {
       kitchen.t -= dt;
       if (kitchen.t <= 0) { ready.push(kitchen.cooking); kitchen.cooking = null; }
@@ -1100,6 +1207,11 @@
         if (g.state === 'eat' && Math.sin(t * 12) > 0) rect(g.x + 8, g.y - 14, 2, 2, '#ffffff');
       } });
     }
+    // 行列（入口の横に並んで待っている人）
+    line.forEach((look, i) => {
+      const y = LINE_FRONT_Y - i * 16;
+      items.push({ y, draw: () => person(LINE_X, y, look, { face: -1 }) });
+    });
     items.push({ y: staff.y, draw: () => person(staff.x, staff.y, STAFF_LOOK, {
       walk: staff.walk, dir: staff.dir, face: staff.face, carry: staff.carry ? { color: dishColor(staff.carry.dish) } : null,
     }) });
@@ -1107,37 +1219,115 @@
 
     // 吹き出し（いちばん手前）
     for (const g of guests) if (g.state === 'order') bubble(g.dish.ja, g.x, g.y - 26);
-    if (cooking) bubble(kitchen.cooking.dish.ja, REST_CHEF.x + 20, REST_CHEF.foot - 30);
+    const waiting = orders.length - line.length;
+    if (serving && waiting > 0) text(`ほか ${waiting}人`, LINE_X - 12, LINE_FRONT_Y + 12, { size: 9, bold: true, align: 'right', color: '#ffd166' });
+    if (cooking) {
+      bubble(kitchen.cooking.dish.ja, REST_CHEF.x + 20, REST_CHEF.foot - 30);
+      // 調理の進み具合
+      const k = 1 - Math.max(0, kitchen.t) / cookTime();
+      rect(REST_CHEF.x - 18, REST_CHEF.foot + 4, 36, 5, '#2a1d14');
+      rect(REST_CHEF.x - 17, REST_CHEF.foot + 5, 34 * k, 3, '#7bc47f');
+      text(`${Math.max(0, kitchen.t).toFixed(1)}秒`, REST_CHEF.x + 22, REST_CHEF.foot + 10, { size: 8, color: '#3a2619' });
+    }
     drawFlyers(dt);   // 営業中に打った文字も料理人へ集まる
   }
 
   /* ===== ⚙ 工学（見下ろしの作業場） ===== */
-  const machinePop = {};   // 設置・強化したときの弾み
-  const SLOT_X = [110, 240, 370];
-  const SLOT_FOOT = [78, 140];
+  const machinePop = {};   // 設置・強化したときの弾み（枠ごと）
+  // 枠の位置（4列×2段）。左は倉庫、段の間は作業員が歩く通路
+  const SLOT_X = [146, 230, 314, 398];
+  const SLOT_FOOT = [80, 144];
+  const ENG_AISLE = 96;
+  const STORE = { x: 62, y: ENG_AISLE };
+  const slotPos = (i) => ({ cx: SLOT_X[i % 4], foot: SLOT_FOOT[Math.floor(i / 4)] });
+  function slotAt(x, y) {
+    for (let i = 0; i < ENG_SLOTS_MAX; i++) {
+      const { cx, foot } = slotPos(i);
+      if (x >= cx - 38 && x <= cx + 38 && y >= foot - 48 && y <= foot + 6) return i;
+    }
+    return -1;
+  }
 
+  // 床・壁・倉庫（動かない部分）
   const engBg = document.createElement('canvas');
   (() => {
     engBg.width = W; engBg.height = FLOOR;
     const g = engBg.getContext('2d');
     const r = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
-    for (let y = 20; y < FLOOR; y += 20) {
-      for (let x = 0; x < W; x += 20) {
-        r(x, y, 20, 20, ((x + y) / 20) % 2 ? '#5a616d' : '#555c68');
-        r(x, y, 20, 1, 'rgba(0,0,0,0.15)');
-        r(x, y, 1, 20, 'rgba(0,0,0,0.15)');
+    for (let y = 20; y < FLOOR; y += 16) {
+      for (let x = 0; x < W; x += 16) {
+        r(x, y, 16, 16, ((x + y) / 16) % 2 ? '#5a616d' : '#565d69');
+        r(x, y, 16, 1, 'rgba(0,0,0,0.12)');
+        r(x, y, 1, 16, 'rgba(0,0,0,0.12)');
       }
     }
+    // 通路（白い線）
+    r(0, ENG_AISLE - 9, W, 18, '#4d535e');
+    for (let x = 4; x < W; x += 16) r(x, ENG_AISLE - 1, 8, 2, '#c9ccd2');
+    // 奥の壁と配管
     r(0, 0, W, 20, '#3d4451');
     r(0, 14, W, 6, '#2e333d');
-    r(0, 6, W, 3, '#7d8799');          // 配管
+    r(0, 6, W, 3, '#7d8799');
     for (let x = 30; x < W; x += 80) r(x, 4, 6, 7, '#9aa3b2');
-    // 施設を置く枠（床の黄色い印）
-    for (const fy of SLOT_FOOT) for (const sx of SLOT_X) {
-      const x = sx - 34; const y = fy - 30;
-      for (const [cx, cy] of [[x, y], [x + 60, y], [x, y + 26], [x + 60, y + 26]]) r(cx, cy, 8, 4, '#e9c46a');
+    // 倉庫（左）: 棚と木箱
+    r(6, 26, 88, 54, '#4a4036');
+    r(6, 26, 88, 3, '#6b5a48');
+    for (let row = 0; row < 3; row++) {
+      r(10, 34 + row * 16, 80, 3, '#7a6450');
+      for (let i = 0; i < 4; i++) {
+        if ((row + i) % 3 === 2) continue;
+        r(13 + i * 19, 37 + row * 16 - 9, 14, 9, '#b07d4a');
+        r(13 + i * 19, 37 + row * 16 - 9, 14, 2, '#c99560');
+        r(19 + i * 19, 37 + row * 16 - 9, 2, 9, '#8b5a3c');
+      }
     }
+    r(6, 108, 88, 40, '#4f4a44');
+    r(6, 108, 88, 3, '#6b665f');
+    for (let i = 0; i < 3; i++) { r(14 + i * 26, 118, 20, 16, '#b07d4a'); r(14 + i * 26, 118, 20, 3, '#c99560'); }
   })();
+
+  // 作業員（施設1つにつき1人）。倉庫と施設を行き来して機械を動かす（見た目だけ）
+  const WORKER_LOOK = { skin: '#f2c9a0', hair: '#5c3d2e', shirt: '#3f6a99', pants: '#2c3e50' };
+  const workers = {};
+  function updateWorkers(dt) {
+    state.eng.slots.forEach((s, i) => {
+      if (!s || i >= state.eng.slotCount) { delete workers[i]; return; }
+      if (!workers[i]) workers[i] = { x: STORE.x, y: STORE.y, path: [], state: 'go', t: 0, face: 1, slot: i };
+    });
+    for (const w of Object.values(workers)) {
+      const { cx, foot } = slotPos(w.slot);
+      const spot = [cx + 30, foot + 2];
+      if (w.state === 'go' && !w.path.length && (w.x !== spot[0] || w.y !== spot[1])) {
+        w.path = [[w.x, ENG_AISLE], [spot[0], ENG_AISLE], spot];
+      }
+      if (w.state === 'go') {
+        if (moveAlong(w, dt * 0.6)) { w.state = 'work'; w.t = 3 + Math.random() * 3; w.face = -1; }
+      } else if (w.state === 'work') {
+        w.t -= dt;
+        if (w.t <= 0) { w.state = 'carry'; w.path = [[w.x, ENG_AISLE], [STORE.x, STORE.y]]; }
+      } else if (w.state === 'carry') {
+        if (moveAlong(w, dt * 0.6)) { w.state = 'store'; w.t = 0.8; }
+      } else if (w.state === 'store') {
+        w.t -= dt;
+        if (w.t <= 0) w.state = 'go';
+      }
+    }
+  }
+
+  // マップの枠をクリックして選ぶ
+  canvas.addEventListener('click', (ev) => {
+    if (view !== 'eng' || !state.eng.unlocked) return;
+    const r = canvas.getBoundingClientRect();
+    const i = slotAt(ev.clientX - r.left, ev.clientY - r.top);
+    if (i < 0 || i > state.eng.slotCount) return;   // 買える枠は次の1つだけ
+    engSel = i;
+    if (openPanel !== 'eng') open('eng'); else renderPanel();
+  });
+  canvas.addEventListener('mousemove', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const i = view === 'eng' && state.eng.unlocked ? slotAt(ev.clientX - r.left, ev.clientY - r.top) : -1;
+    canvas.style.cursor = i >= 0 && i <= state.eng.slotCount ? 'pointer' : 'default';
+  });
 
   // 箱（上の面と前の面）
   function box(x, y, w, top, front, cTop, cFront) {
@@ -1206,6 +1396,7 @@
   function drawEng(t, dt) {
     ctx.drawImage(engBg, 0, 0);
     text('工学', 10, 14, { size: 12, bold: true });
+    text('倉庫', 50, 102, { size: 8, align: 'center', color: '#c9d1dc' });
 
     if (!state.eng.unlocked) {
       rect(0, 0, W, FLOOR, 'rgba(0,0,0,0.5)');
@@ -1214,23 +1405,58 @@
       return;
     }
 
-    const placed = FACILITIES.filter((f) => state.eng.fac[f.id]).length;
-    text(`施設 ${placed} / ${FACILITIES.length}`, 44, 14, { size: 10, color: '#c9d1dc' });
+    const e = state.eng;
+    const used = e.slots.slice(0, e.slotCount).filter(Boolean).length;
+    text(`枠 ${used} / ${e.slotCount}　（枠をクリックして建てる）`, 44, 14, { size: 9, color: '#c9d1dc' });
+    updateWorkers(dt);
 
-    FACILITIES.forEach((f, i) => {
-      const lv = state.eng.fac[f.id] || 0;
-      const cx = SLOT_X[i % 3];
-      const foot = SLOT_FOOT[Math.floor(i / 3)];
-      const pop = Math.max(0, machinePop[f.id] || 0);
-      machinePop[f.id] = pop - dt * 2;
-      if (!lv) {
-        text('空き', cx, foot - 12, { size: 10, align: 'center', color: 'rgba(255,255,255,0.35)' });
-        text(f.name, cx, foot + 10, { size: 9, align: 'center', color: 'rgba(255,255,255,0.35)' });
-        return;
+    const items = [];
+    for (let i = 0; i < ENG_SLOTS_MAX; i++) {
+      const { cx, foot } = slotPos(i);
+      const s = e.slots[i];
+      const x = cx - 34;
+      const y = foot - 40;
+      if (i >= e.slotCount) {
+        // まだ使えない枠
+        rect(x, y, 68, 40, 'rgba(0,0,0,0.25)');
+        if (i === e.slotCount) {
+          text('＋', cx, foot - 18, { size: 14, bold: true, align: 'center', color: 'rgba(255,255,255,0.5)' });
+          text('枠を増やす', cx, foot - 4, { size: 8, align: 'center', color: 'rgba(255,255,255,0.5)' });
+        } else {
+          text('🔒', cx, foot - 14, { size: 10, align: 'center' });
+        }
+      } else if (!s) {
+        // 空き枠（床の黄色い印）
+        for (const [px, py] of [[x, y], [x + 60, y], [x, y + 36], [x + 60, y + 36]]) rect(px, py, 8, 4, '#e9c46a');
+        text('＋ 空き', cx, foot - 16, { size: 10, align: 'center', color: 'rgba(255,255,255,0.45)' });
+      } else {
+        const pop = Math.max(0, machinePop[i] || 0);
+        machinePop[i] = pop - dt * 2;
+        const f = FACILITIES.find((q) => q.id === s.fac);
+        items.push({ y: foot, draw: () => {
+          drawMachine(s.fac, cx, foot - pop * 6, t + i);
+          for (let l = 0; l < s.lv; l++) rect(cx - 26 + l * 6, foot - 1, 4, 3, '#ffd166');   // レベルの印
+          text(f.name, cx, foot + 9, { size: 8, bold: true, align: 'center', color: '#f3ece2' });
+        } });
       }
-      drawMachine(f.id, cx, foot - pop * 6, t + i);
-      text(`${f.name}  Lv.${lv}`, cx, foot + 10, { size: 9, bold: true, align: 'center', color: '#f3ece2' });
-    });
+      // 選んでいる枠
+      if (engSel === i && openPanel === 'eng' && Math.sin(t * 6) > -0.3) {
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - 2, y - 8, 72, 50);
+        ctx.lineWidth = 1;
+      }
+    }
+    for (const w of Object.values(workers)) {
+      items.push({ y: w.y, draw: () => {
+        const working = w.state === 'work';
+        const hop = working ? -Math.abs(Math.sin(t * 8 + w.slot)) * 2 : 0;
+        person(w.x, w.y + hop, WORKER_LOOK, { walk: w.path.length ? w.walk : 0, dir: w.dir, face: w.face,
+          carry: w.state === 'carry' ? { color: '#b07d4a' } : null });
+        if (working && Math.sin(t * 8 + w.slot) > 0.7) rect(w.x - 12, w.y - 18, 3, 3, '#ffd166');   // 火花
+      } });
+    }
+    items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
   }
 
   function drawFloats(dt) {
