@@ -316,8 +316,8 @@
     else if (s >= cap) note = '冷蔵庫がいっぱい！';
     $('notice').textContent = note;
     const btn = $('btn-open');
-    btn.textContent = serving ? '⏩ すぐ終える' : '🍳 営業する';
-    btn.disabled = !serving && (openPanel === 'cook' || openPanel === 'result');
+    btn.textContent = serving ? '🍳 営業中…' : '🍳 営業する';
+    btn.disabled = serving || openPanel === 'cook' || openPanel === 'result';
     for (const [id, name] of [['btn-letters', 'letters'], ['btn-upgrade', 'upgrade'], ['btn-book', 'book']]) {
       $(id).classList.toggle('on', openPanel === name);
     }
@@ -708,7 +708,7 @@
     b.addEventListener('click', () => setView(b.dataset.view));
   }
 
-  $('btn-open').addEventListener('click', () => (serving ? finishServe() : open('cook')));
+  $('btn-open').addEventListener('click', () => { if (!serving) open('cook'); });
   $('btn-letters').addEventListener('click', () => toggle('letters'));
   $('btn-upgrade').addEventListener('click', () => toggle('upgrade'));
   $('btn-book').addEventListener('click', () => toggle('book'));
