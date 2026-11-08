@@ -219,3 +219,20 @@ body:not(.electron) { background: #15110e; }
 
 /* 結果 */
 .result-total { font-size: 22px; font-weight: 800; color: var(--gold); text-align: center; margin: 6px 0 8px; }
+
+/* ---------- 画面の切り替え（⌨ / 🍽 / ⚙） ---------- */
+#views { display: flex; gap: 2px; margin-right: 2px; -webkit-app-region: no-drag; }
+#hud #views button { width: 22px; font-size: 11px; }
+#hud #views button.on { background: rgba(231, 111, 81, 0.75); }
+
+/* 工学のパネル */
+.upg.fac { align-items: start; }
+.upg .next { color: var(--sub); }
+.conv { margin-top: 5px; display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sub); flex-wrap: wrap; }
+.conv select {
+  background: rgba(255, 255, 255, 0.1); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px; font-size: 11px;
+}
+.conv select option { background: #2a201b; }
+.conv .btn { padding: 3px 8px; font-size: 11px; }
+.upg .btn.primary { line-height: 1.3; }

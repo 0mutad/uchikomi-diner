@@ -187,3 +187,44 @@ const UPGRADES = [
 const POPULAR_COUNT = 3;
 const POPULAR_BONUS = 1.5;
 const DAY_START_HOUR = 5;
+
+/* ⚙ 工学。強化の欄で買うとアンロックされ、その中の施設をさらに買っていく。
+ * 数字は遊びながら調整する（仮） */
+const ENGINEERING_COST = 5000;
+const FAC_MAX_LV = 5;
+const VOWELS = ['a', 'i', 'u', 'e', 'o'];
+
+const FACILITIES = [
+  {
+    id: 'converter', name: '文字変換機', icon: '🔄', kind: '文字の変換',
+    rate: (lv) => Math.max(2, 6 - lv),                 // 母音 何個で 1文字
+    desc: (lv) => `母音（a・i・u・e・o）${Math.max(2, 6 - lv)}個 → 好きな普通の文字1個`,
+    cost: (lv) => Math.round(1500 * Math.pow(2.0, lv)),
+  },
+  {
+    id: 'refiner', name: '高級変換炉', icon: '💎', kind: '文字の変換',
+    rate: (lv) => Math.max(8, 24 - lv * 4),             // 普通の文字 何個で 高級1文字
+    desc: (lv) => `普通の文字${Math.max(8, 24 - lv * 4)}個 → 好きな高級食材1個`,
+    cost: (lv) => Math.round(3000 * Math.pow(2.2, lv)),
+  },
+  {
+    id: 'spice', name: '調味料工場', icon: '🧂', kind: '利益率',
+    desc: (lv) => `全料理の売値 +${lv * 5}%`,
+    cost: (lv) => Math.round(2500 * Math.pow(2.3, lv)),
+  },
+  {
+    id: 'tower', name: '宣伝塔', icon: '📣', kind: '利益率',
+    desc: (lv) => `日替わり人気料理の売値 ×${(1.5 + lv * 0.1).toFixed(1)}`,
+    cost: (lv) => Math.round(2000 * Math.pow(2.2, lv)),
+  },
+  {
+    id: 'washer', name: '食器洗浄機', icon: '🫧', kind: '便利',
+    desc: (lv) => `営業のスピード +${lv * 15}%`,
+    cost: (lv) => Math.round(1500 * Math.pow(2.0, lv)),
+  },
+  {
+    id: 'prepper', name: '自動仕込み機', icon: '🤖', kind: '資源',
+    desc: (lv) => `a〜z を100打つごとに、ランダムな文字 +${lv}個`,
+    cost: (lv) => Math.round(3000 * Math.pow(2.3, lv)),
+  },
+];
