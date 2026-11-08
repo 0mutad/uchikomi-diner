@@ -638,35 +638,73 @@
     ctx.fillText(str, R(x), R(y));
   }
 
-  /* 人を描く。足元が (x, foot)。ドット絵に差し替えるときはここを画像にする */
-  function person(x, foot, look, { walk = 0, sit = false, carry = null, chef = false, face = -1 } = {}) {
-    const px = R(x);
-    const step = walk ? (Math.floor(walk * 8) % 2 ? 2 : -2) : 0;
-    const top = foot - 36 + (sit ? 6 : 0) + (walk ? Math.abs(step) * 0.5 : 0);
-    // 脚
-    if (sit) {
-      rect(px - 5, top + 24, 10, 5, look.pants);
-      rect(px + face * 6 - 2, top + 24, 6, 9, look.pants);
-    } else {
-      rect(px - 5 + step, top + 24, 4, 12, look.pants);
-      rect(px + 1 - step, top + 24, 4, 12, look.pants);
+  /* ===== ドット絵（仮） =====
+   * 絵は文字の並びで書き、1ドットを画面の2px（料理人の大きい絵は3px）で描く。
+   * 本番の絵に差し替えるときは makeSprite の代わりに画像を読み込めばよい */
+  const PX = 2;
+  const spriteCache = new Map();
+  function makeSprite(key, rows, pal) {
+    let c = spriteCache.get(key);
+    if (c) return c;
+    c = document.createElement('canvas');
+    c.width = rows[0].length;
+    c.height = rows.length;
+    const g = c.getContext('2d');
+    rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (pal[ch]) { g.fillStyle = pal[ch]; g.fillRect(x, y, 1, 1); }
+    }));
+    spriteCache.set(key, c);
+    return c;
+  }
+  // (x, foot) が足元の真ん中
+  function drawSprite(img, x, foot, { flip = false, scale = PX } = {}) {
+    const w = img.width * scale;
+    const h = img.height * scale;
+    ctx.imageSmoothingEnabled = false;
+    ctx.save();
+    ctx.translate(R(x - w / 2), R(foot - h));
+    if (flip) { ctx.translate(w, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.restore();
+  }
+
+  // 人の絵（8×12ドット）。h髪 s肌 k目 c服 p下 o靴 w白 a前掛け
+  const HEAD_FRONT = ['..hhhh..', '.hhhhhh.', '.hssssh.', '.skssks.', '..ssss..'];
+  const HEAD_SIDE = ['..hhhh..', '.hhhhhh.', '.hhssss.', '.hsssks.', '..ssss..'];
+  const HAT_FRONT = ['.wwwwww.', '.wwwwww.', '.hssssh.', '.skssks.', '..ssss..'];
+  const HAT_SIDE = ['.wwwwww.', '.wwwwww.', '.hhssss.', '.hsssks.', '..ssss..'];
+  const BODY = ['.cccccc.', 'sccccccs', 'sccccccs', '.cccccc.'];
+  const BODY_CHEF = ['.cccccc.', 'sccccccs', 'saaaaaas', '.aaaaaa.'];
+  const LEGS = { a: ['.pp..pp.', '.pp..pp.', '.oo..oo.'], b: ['..pppp..', '..pppp..', '..oooo..'], sit: ['.pppppp.'] };
+  const HAT_TOP = ['..wwww..', '.wwwwww.'];
+
+  function personSprite(look, chef, pose) {
+    const side = pose === 'sideA' || pose === 'sideB';
+    let rows = [...(chef ? (side ? HAT_SIDE : HAT_FRONT) : (side ? HEAD_SIDE : HEAD_FRONT)), ...(chef ? BODY_CHEF : BODY)];
+    if (pose === 'sit') rows = [...rows, ...LEGS.sit];
+    else rows = [...rows, ...(pose === 'sideB' || pose === 'frontB' ? LEGS.b : LEGS.a)];
+    if (chef) rows = [...HAT_TOP, ...rows];
+    const key = `p|${chef}|${pose}|${look.skin}${look.hair}${look.shirt}${look.pants}`;
+    return makeSprite(key, rows, {
+      h: look.hair, s: look.skin, k: '#2a1d14', c: look.shirt, p: look.pants, o: '#2a1d14', w: '#ffffff', a: '#e0d6c8',
+    });
+  }
+
+  /* 人を描く。足元が (x, foot) */
+  function person(x, foot, look, { walk = 0, dir = 'h', sit = false, carry = null, chef = false, face = 1, scale = PX } = {}) {
+    let pose = 'front';
+    if (sit) pose = 'sit';
+    else if (walk) {
+      const b = Math.floor(walk * 7) % 2;
+      pose = dir === 'h' ? (b ? 'sideB' : 'sideA') : (b ? 'frontB' : 'front');
     }
-    // 体
-    rect(px - 6, top + 11, 12, 14, look.shirt);
-    if (chef) rect(px - 6, top + 17, 12, 8, '#e8e2d8');      // 前掛け
-    // 頭
-    rect(px - 5, top, 10, 11, look.skin);
-    rect(px - 5, top, 10, 3, look.hair);
-    rect(px + (face < 0 ? -5 : 3), top + 3, 2, 4, look.hair);
-    rect(px + face * 2 - 1, top + 5, 2, 2, '#2a1d14');      // 目
-    if (chef) {
-      rect(px - 6, top - 7, 12, 7, '#ffffff');              // 帽子
-      rect(px - 7, top - 10, 14, 4, '#ffffff');
-    }
-    // 運んでいる料理
+    rect(x - 4 * scale, foot - scale, 8 * scale, scale * 1.5, 'rgba(0,0,0,0.22)');   // 影
+    const bob = walk && Math.floor(walk * 7) % 2 ? -1 : 0;
+    drawSprite(personSprite(look, chef, pose), x, foot + bob, { flip: pose.startsWith('side') && face < 0, scale });
     if (carry) {
-      rect(px + face * 9 - 6, top + 14, 12, 3, '#f3ece2');
-      rect(px + face * 9 - 4, top + 11, 8, 3, carry.color);
+      const px = x + (face < 0 ? -10 : 10);
+      rect(px - 6, foot - 15, 12, 3, '#f3ece2');
+      rect(px - 4, foot - 18, 8, 3, carry.color);
     }
   }
 
@@ -686,35 +724,47 @@
   const floats = [];   // 浮かぶ文字（+コインなど）
   function floatText(str, x, y, color = '#ffd166', suffix = ' 🪙') { floats.push({ str, x, y, t: 0, color, suffix }); }
 
-  /* ===== 仕込み（キーボード） ===== */
-  const ROWS = ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'];
-  const KEY_W = 33;
-  const KEY_H = 28;
-  const KEY_GAP = 3;
-  const KB_X = 112;
-  const KB_Y = 58;
-  const ROW_SHIFT = [0, 10, 26];
+  /* ===== 仕込み（PCのキーボード） ===== */
+  const KU = 24;          // キー1個ぶんの幅
+  const KEY_H = 22;
+  const KB_X = 108;
+  const KB_Y = 30;
+  // [表示, 幅(キー何個ぶん)]。a〜z 以外は飾り
+  const KB_ROWS = [
+    [['`', 1], ['1', 1], ['2', 1], ['3', 1], ['4', 1], ['5', 1], ['6', 1], ['7', 1], ['8', 1], ['9', 1], ['0', 1], ['-', 1], ['=', 1], ['BS', 2]],
+    [['Tab', 1.5], ...[...'qwertyuiop'].map((c) => [c, 1]), ['[', 1], [']', 1], ['\\', 1.5]],
+    [['Caps', 1.75], ...[...'asdfghjkl'].map((c) => [c, 1]), [';', 1], ["'", 1], ['Enter', 2.25]],
+    [['Shift', 2.25], ...[...'zxcvbnm'].map((c) => [c, 1]), [',', 1], ['.', 1], ['/', 1], ['Shift', 2.75]],
+    [['Ctrl', 1.25], ['Win', 1.25], ['Alt', 1.25], ['', 6.25], ['Alt', 1.25], ['Win', 1.25], ['Fn', 1.25], ['Ctrl', 1.25]],
+  ];
+  const KEYS = [];
   const keyPos = {};
-  ROWS.forEach((row, r) => [...row].forEach((ch, i) => {
-    keyPos[ch] = { x: KB_X + ROW_SHIFT[r] + i * (KEY_W + KEY_GAP), y: KB_Y + r * (KEY_H + KEY_GAP) };
-  }));
-  const PREP_CHEF = { x: 56, foot: 148 };
+  KB_ROWS.forEach((row, r) => {
+    let x = KB_X;
+    for (const [label, u] of row) {
+      const k = { label, x, y: KB_Y + r * (KEY_H + 2), w: u * KU - 2, letter: label.length === 1 && LETTERS.includes(label) };
+      KEYS.push(k);
+      if (k.letter) keyPos[label] = { x: k.x + k.w / 2, y: k.y + KEY_H / 2 };
+      x += u * KU;
+    }
+  });
+  const PREP_CHEF = { x: 54, foot: 148 };
   const flash = {};        // キーが光る残り時間
   const flyers = [];       // 料理人へ吸い込まれる文字
   let gulp = 0;            // 料理人が吸い込んだときの弾み
+  const REST_CHEF = { x: 40, foot: 70 };
 
-  /* 文字を飛ばす。キーボード画面はキーから料理人へ、レストラン画面は床から厨房の料理人へ、
-   * 工学画面は上から倉庫へ */
+  /* 文字を飛ばす。キーボード画面はキーから料理人へ、レストラン画面は床から厨房の料理人へ */
   function spawnLetter(ch) {
     flash[ch] = 0.35;
     if (flyers.length > 50) return;
-    const f = { ch, t: 0, dur: 0.55 + Math.random() * 0.25, rare: RARE.has(ch) };
     if (view === 'eng') return;   // 工学の画面では文字を飛ばさない（数は裏で増える）
+    const f = { ch, t: 0, dur: 0.55 + Math.random() * 0.25, rare: RARE.has(ch) };
     if (view === 'restaurant') {
-      Object.assign(f, { sx: 200 + Math.random() * 250, sy: 150, tx: 84, ty: 82, dur: f.dur + 0.3 });
+      Object.assign(f, { sx: 160 + Math.random() * 280, sy: 150, tx: REST_CHEF.x, ty: REST_CHEF.foot - 16, dur: f.dur + 0.3 });
     } else {
       const k = keyPos[ch];
-      Object.assign(f, { sx: k.x + KEY_W / 2, sy: k.y + KEY_H / 2, tx: PREP_CHEF.x + 4, ty: PREP_CHEF.foot - 26 });
+      Object.assign(f, { sx: k.x, sy: k.y, tx: PREP_CHEF.x, ty: PREP_CHEF.foot - 30 });
     }
     flyers.push(f);
   }
@@ -730,6 +780,7 @@
       const y = f.sy + (f.ty - f.sy) * e - Math.sin(k * Math.PI) * 26;
       const size = 14 - e * 7;
       ctx.globalAlpha = 1 - e * 0.5;
+      text(f.ch, x + 1, y + 1, { size, bold: true, align: 'center', color: 'rgba(0,0,0,0.5)', font: 'Consolas, monospace' });
       text(f.ch, x, y, { size, bold: true, align: 'center', color: f.rare ? '#ffd166' : '#ffffff', font: 'Consolas, monospace' });
       ctx.globalAlpha = 1;
       if (k >= 1) { flyers.splice(i, 1); gulp = Math.min(1, gulp + 0.25); }
@@ -744,51 +795,67 @@
     ctx.fill();
   }
 
+  // 机（木目）を一度だけ描いておく
+  const deskBg = document.createElement('canvas');
+  (() => {
+    deskBg.width = W; deskBg.height = FLOOR;
+    const g = deskBg.getContext('2d');
+    for (let y = 0; y < FLOOR; y += 12) {
+      g.fillStyle = (y / 12) % 2 ? '#7a5034' : '#80563a';
+      g.fillRect(0, y, W, 12);
+      g.fillStyle = 'rgba(0,0,0,0.12)';
+      g.fillRect(0, y + 11, W, 1);
+      for (let x = (y * 7) % 90; x < W; x += 90) g.fillRect(x, y + 4, 26, 1);   // 木目
+    }
+  })();
+
   function drawPrep(t, dt) {
-    // 背景（厨房の壁）
-    rect(0, 0, W, FLOOR, '#5a3d2b');
-    for (let x = 0; x < W; x += 24) rect(x, 0, 1, FLOOR, 'rgba(0,0,0,0.15)');
-    rect(0, 136, W, 20, '#8b5a3c');
-    rect(0, 136, W, 3, '#a06a47');
+    ctx.drawImage(deskBg, 0, 0);
 
     // 見出し
-    text('仕込み中', 12, 20, { size: 13, bold: true });
-    text('打った文字が料理人に集まります', 12, 36, { size: 10, color: '#d8c8b0' });
+    text('仕込み中', 10, 16, { size: 13, bold: true });
+    text('打った文字が', 10, 32, { size: 9, color: '#f0dcc4' });
+    text('料理人に集まります', 10, 44, { size: 9, color: '#f0dcc4' });
     const pop = [...popular.ids].map((id) => DISH_BY_ID[id].ja).join('・');
-    text(`本日の人気：${pop}`, KB_X, 46, { size: 9, color: '#ffd166' });
+    text(`本日の人気：${pop}`, KB_X, 18, { size: 10, bold: true, color: '#ffd166' });
 
-    // キーボードの台
-    ctx.fillStyle = '#2b1d15';
-    ctx.beginPath();
-    ctx.roundRect(KB_X - 6, KB_Y - 5, 362, 3 * KEY_H + 2 * KEY_GAP + 10, 8);
-    ctx.fill();
+    // キーボードの本体
+    rect(KB_X - 8, KB_Y - 6, 15 * KU + 14, 5 * (KEY_H + 2) + 12, '#1d1f24');
+    rect(KB_X - 8, KB_Y - 6, 15 * KU + 14, 2, '#3a3d45');
+    rect(KB_X - 8, KB_Y + 5 * (KEY_H + 2) + 4, 15 * KU + 14, 2, '#0f1013');
 
     // キー
     const max = Math.max(1, ...LETTERS.map((c) => state.letters[c]));
-    for (const ch of LETTERS) {
-      const k = keyPos[ch];
+    for (const k of KEYS) {
+      if (!k.letter) {
+        rect(k.x, k.y, k.w, KEY_H, '#55555c');
+        rect(k.x, k.y, k.w, KEY_H - 4, '#77777f');
+        if (k.label) text(k.label, k.x + 3, k.y + 10, { size: 7, color: '#c4c4cc', font: 'Consolas, monospace' });
+        continue;
+      }
+      const ch = k.label;
       const n = state.letters[ch];
       const f = Math.max(0, flash[ch] || 0);
       flash[ch] = f - dt;
       const press = f > 0 ? 2 : 0;
-      const fill = 0.18 + 0.5 * (n / max);
-      const base = RARE.has(ch) ? `rgba(255, 209, 102, ${fill})` : `rgba(243, 236, 226, ${fill * 0.7})`;
-      rect(k.x, k.y + 3, KEY_W, KEY_H - 2, '#1a120d');                       // 影
-      rect(k.x, k.y + press, KEY_W, KEY_H - 3, '#4a3428');
-      rect(k.x, k.y + press, KEY_W, KEY_H - 3, base);
-      if (f > 0) rect(k.x, k.y + press, KEY_W, KEY_H - 3, `rgba(255,255,255,${f * 1.5})`);
-      text(ch.toUpperCase(), k.x + 5, k.y + press + 13, { size: 12, bold: true, color: RARE.has(ch) ? '#ffd166' : '#ffffff', font: 'Consolas, monospace' });
-      text(String(n), k.x + KEY_W - 4, k.y + press + 24, { size: 9, align: 'right', color: n ? '#f3ece2' : 'rgba(243,236,226,0.4)', font: 'Consolas, monospace' });
+      const rare = RARE.has(ch);
+      rect(k.x, k.y, k.w, KEY_H, rare ? '#a8873a' : '#9d978e');                      // キーの側面
+      rect(k.x, k.y + press, k.w, KEY_H - 4, rare ? '#f1d58a' : '#e9e5de');          // キーの上面
+      // ためた数が多いほど色が濃くなる
+      rect(k.x, k.y + press, k.w, KEY_H - 4, `rgba(231, 111, 81, ${0.45 * (n / max)})`);
+      if (f > 0) rect(k.x, k.y + press, k.w, KEY_H - 4, `rgba(255,255,255,${Math.min(0.9, f * 2.5)})`);
+      text(ch.toUpperCase(), k.x + 3, k.y + press + 10, { size: 10, bold: true, color: '#2d2925', font: 'Consolas, monospace' });
+      text(String(n), k.x + k.w - 2, k.y + press + 16, { size: 7, align: 'right', color: n ? '#5a3a2a' : 'rgba(45,41,37,0.35)', font: 'Consolas, monospace' });
     }
 
     // 料理人（吸い込むと弾む）
     const bob = Math.sin(t * 2) * 0.8 - gulp * 4;
-    glow(PREP_CHEF.x, PREP_CHEF.foot - 22);   // 吸い込みの光
-    person(PREP_CHEF.x, PREP_CHEF.foot + bob, CHEF_LOOK, { chef: true, face: 1 });
+    glow(PREP_CHEF.x, PREP_CHEF.foot - 28);
+    person(PREP_CHEF.x, PREP_CHEF.foot + bob, CHEF_LOOK, { chef: true, scale: 3 });
     drawFlyers(dt);
   }
 
-  /* ===== 営業（お店） ===== */
+  /* ===== 営業（お店を見下ろす） ===== */
   let serving = false;
   let unpaid = 0;              // まだ見た目で受け取っていない売上
   let orders = [];             // これから来るお客さんが頼む料理
@@ -796,14 +863,16 @@
   let totalOrders = 0;
   let guests = [];
   let spawnWait = 0;
-  const TABLES = [220, 305, 390].map((x) => ({ x, guest: null, dish: null }));
-  const COUNTER_X = 150;       // 料理を置く場所
-  const STAFF_HOME = 172;
-  const DOOR_X = 468;
+  const TABLES = [[200, 70], [290, 70], [380, 70], [200, 122], [290, 122], [380, 122]]
+    .map(([x, y]) => ({ x, y, guest: null, dish: null }));
+  const AISLE_Y = 98;          // テーブルの列の間の通路
+  const DOOR = { x: 455, y: 176 };
+  const STAFF_HOME = { x: 146, y: AISLE_Y };
+  const PICK = { x: 140, y: 64 };   // カウンターの前（料理を受け取る場所）
   const SPEED = 110;
   const kitchen = { queue: [], cooking: null, t: 0 };
   let ready = [];              // カウンターに置かれた料理（お客さん）
-  const staff = { x: STAFF_HOME, state: 'idle', target: STAFF_HOME, carry: null, walk: 0 };
+  const staff = { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, walk: 0, face: 1 };
 
   function startServe(rows) {
     orders = [];
@@ -820,7 +889,7 @@
     ready = [];
     kitchen.queue = [];
     kitchen.cooking = null;
-    Object.assign(staff, { x: STAFF_HOME, state: 'idle', target: STAFF_HOME, carry: null });
+    Object.assign(staff, { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, face: 1 });
     TABLES.forEach((tb) => { tb.guest = null; tb.dish = null; });
     spawnWait = 0;
     serving = true;
@@ -836,22 +905,40 @@
     open('result');
   }
 
-  function moveToward(obj, target, dt) {
-    const d = target - obj.x;
-    const s = Math.sign(d) * Math.min(Math.abs(d), SPEED * dt);
-    obj.x += s;
-    obj.walk = s ? (obj.walk || 0) + dt : 0;
-    obj.face = s ? Math.sign(s) : (obj.face || -1);
-    return Math.abs(target - obj.x) < 0.5;
+  // 決めた道すじ（path）にそって歩く。着いたら true
+  function moveAlong(e, dt) {
+    let left = SPEED * dt;
+    while (e.path.length && left > 0) {
+      const [tx, ty] = e.path[0];
+      const dx = tx - e.x;
+      const dy = ty - e.y;
+      const d = Math.hypot(dx, dy);
+      if (Math.abs(dx) > 0.5) e.face = Math.sign(dx);
+      e.dir = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+      if (d <= left) { e.x = tx; e.y = ty; left -= d; e.path.shift(); }
+      else { e.x += (dx / d) * left; e.y += (dy / d) * left; left = 0; }
+    }
+    const moving = e.path.length > 0;
+    e.walk = moving ? (e.walk || 0) + dt : 0;
+    return !moving;
   }
+
+  const seatOf = (tb) => [tb.x - 21, tb.y + 4];          // お客さんは左の席
+  const standOf = (tb) => [tb.x + 21, tb.y + 4];         // 店員は右の席の横に立つ
 
   function updateServe(dt) {
     // お客さんが来る（空いている席があれば）
     spawnWait -= dt;
-    const free = TABLES.find((tb) => !tb.guest);
-    if (orders.length && free && spawnWait <= 0) {
-      const g = { x: DOOR_X, dish: orders.shift(), table: free, state: 'enter', t: 0, look: GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)] };
-      free.guest = g;
+    const freeTables = TABLES.filter((tb) => !tb.guest);
+    if (orders.length && freeTables.length && spawnWait <= 0) {
+      const tb = freeTables[Math.floor(Math.random() * freeTables.length)];
+      const [sx, sy] = seatOf(tb);
+      const g = {
+        x: DOOR.x, y: DOOR.y, dish: orders.shift(), table: tb, state: 'enter', t: 0, face: -1,
+        path: [[DOOR.x, AISLE_Y], [sx, AISLE_Y], [sx, sy]],
+        look: GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)],
+      };
+      tb.guest = g;
       guests.push(g);
       spawnWait = 0.9;
     }
@@ -859,7 +946,7 @@
     for (let i = guests.length - 1; i >= 0; i--) {
       const g = guests[i];
       if (g.state === 'enter') {
-        if (moveToward(g, g.table.x - 16, dt)) { g.state = 'order'; g.t = 0.8; g.face = 1; }
+        if (moveAlong(g, dt)) { g.state = 'order'; g.t = 0.8; g.face = 1; }
       } else if (g.state === 'order') {
         g.t -= dt;
         if (g.t <= 0) { g.state = 'wait'; kitchen.queue.push(g); }
@@ -869,14 +956,15 @@
           const price = sellPrice(g.dish);
           unpaid = Math.max(0, unpaid - price);
           served++;
-          floatText(`+${price}`, g.table.x, 74);
+          floatText(`+${price}`, g.table.x, g.table.y - 18);
           g.table.dish = null;
           g.table.guest = null;
           g.state = 'leave';
+          g.path = [[g.x, AISLE_Y], [DOOR.x, AISLE_Y], [DOOR.x, DOOR.y]];
           paintHud();
         }
       } else if (g.state === 'leave') {
-        if (moveToward(g, DOOR_X + 10, dt)) guests.splice(i, 1);
+        if (moveAlong(g, dt)) guests.splice(i, 1);
       }
     }
 
@@ -888,20 +976,27 @@
     }
 
     // 店員: カウンターの料理を席へ運ぶ
-    if (staff.state === 'idle' && ready.length) staff.state = 'pick';
+    const goPick = () => { staff.state = 'pick'; staff.path = [[staff.x, AISLE_Y], [PICK.x, AISLE_Y], [PICK.x, PICK.y]]; };
+    if (staff.state === 'idle' && ready.length) goPick();
     if (staff.state === 'pick') {
-      if (moveToward(staff, COUNTER_X + 10, dt)) { staff.carry = ready.shift(); staff.state = 'deliver'; }
+      if (moveAlong(staff, dt)) {
+        staff.carry = ready.shift();
+        staff.state = 'deliver';
+        const [x, y] = standOf(staff.carry.table);
+        staff.path = [[PICK.x, AISLE_Y], [x, AISLE_Y], [x, y]];
+      }
     } else if (staff.state === 'deliver') {
-      const g = staff.carry;
-      if (moveToward(staff, g.table.x + 18, dt)) {
+      if (moveAlong(staff, dt)) {
+        const g = staff.carry;
         g.table.dish = g.dish;
         g.state = 'eat';
         g.t = 1.3;
         staff.carry = null;
-        staff.state = ready.length ? 'pick' : 'back';
+        if (ready.length) goPick();
+        else { staff.state = 'back'; staff.path = [[staff.x, AISLE_Y], [STAFF_HOME.x, STAFF_HOME.y]]; }
       }
     } else if (staff.state === 'back') {
-      if (moveToward(staff, STAFF_HOME, dt)) { staff.state = 'idle'; staff.face = 1; }
+      if (moveAlong(staff, dt)) { staff.state = 'idle'; staff.face = 1; }
     }
 
     if (!orders.length && !guests.length && !ready.length && !kitchen.cooking && !kitchen.queue.length && !staff.carry) finishServe();
@@ -915,126 +1010,226 @@
     text(str, x, y - 2, { size: 10, align: 'center', color: '#3a2619' });
   }
 
+  // 店の床・壁・厨房（動かない部分）は一度だけ描いておく
+  const shopBg = document.createElement('canvas');
+  (() => {
+    shopBg.width = W; shopBg.height = FLOOR;
+    const g = shopBg.getContext('2d');
+    const r = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+    // 客席の床（板張り）
+    for (let y = 22; y < FLOOR; y += 8) {
+      r(124, y, W - 124, 8, (y / 8) % 2 ? '#a0704c' : '#96673f');
+      for (let x = 124 + ((y / 8) % 3) * 22; x < W; x += 66) r(x, y, 1, 8, 'rgba(0,0,0,0.18)');
+    }
+    // 厨房の床（タイル）
+    for (let y = 22; y < FLOOR; y += 12) {
+      for (let x = 0; x < 124; x += 12) r(x, y, 12, 12, ((x + y) / 12) % 2 ? '#d8d2c4' : '#c7c0b0');
+    }
+    // 奥の壁
+    r(0, 0, W, 22, '#6b4a33');
+    r(0, 16, W, 6, '#4e3424');
+    r(0, 0, W, 2, '#3a2619');
+    // 窓
+    for (const wx of [170, 420]) {
+      r(wx, 3, 34, 12, '#9fc5d9');
+      r(wx + 16, 3, 2, 12, '#6b4a33');
+      r(wx, 3, 34, 2, '#cfe6f0');
+    }
+    // 看板
+    r(8, 2, 104, 14, '#1f3a5f');
+    r(8, 2, 104, 2, '#2d5080');
+    // 左右の壁
+    r(0, 22, 3, FLOOR - 22, '#4e3424');
+    r(W - 3, 22, 3, FLOOR - 22, '#4e3424');
+    // 厨房: コンロ・流し・冷蔵庫（上の面と前の面）
+    r(6, 22, 40, 16, '#3b3b46'); r(6, 38, 40, 6, '#2a2a32');
+    for (const bx of [12, 30]) { r(bx, 26, 8, 8, '#1c1c22'); r(bx + 2, 28, 4, 4, '#55555f'); }
+    r(50, 22, 30, 16, '#b8bec6'); r(50, 38, 30, 6, '#8f959d'); r(56, 25, 18, 10, '#7d9cb3');
+    r(84, 22, 22, 16, '#e6e9ec'); r(84, 38, 22, 6, '#c3c8cd'); r(102, 26, 2, 8, '#8f959d');
+    // カウンター（厨房と客席の仕切り）
+    r(112, 30, 16, 118, '#c08457');
+    r(112, 30, 16, 2, '#d89a6a');
+    r(112, 148, 16, 6, '#8b5a3c');
+    r(127, 30, 1, 118, '#8b5a3c');
+    // 入口のマット
+    r(436, 148, 38, 8, '#6b2f1f');
+    r(438, 150, 34, 4, '#8a3d28');
+  })();
+
+  function drawTable(tb) {
+    const { x, y } = tb;
+    // いす（左・右）
+    for (const cx of [x - 26, x + 16]) { rect(cx, y - 6, 10, 8, '#7a4b2e'); rect(cx, y + 2, 10, 3, '#5c3d2e'); }
+    // 天板と前の面
+    rect(x - 15, y - 12, 30, 16, '#d49a68');
+    rect(x - 15, y - 12, 30, 2, '#e6b386');
+    rect(x - 15, y + 4, 30, 5, '#8b5a3c');
+    if (tb.dish) {
+      rect(x - 7, y - 7, 14, 6, '#f3ece2');
+      rect(x - 4, y - 6, 8, 4, dishColor(tb.dish));
+    }
+  }
+
   function drawServe(t, dt) {
-    // 壁と床
-    rect(0, 0, W, 104, '#6b4a33');
-    for (let x = 0; x < W; x += 24) rect(x, 0, 1, 104, 'rgba(0,0,0,0.12)');
-    rect(0, 92, W, 12, '#4e3424');
-    for (let x = 0; x < W; x += 16) {
-      for (let y = 104; y < FLOOR; y += 13) rect(x, y, 16, 13, ((x / 16 + (y - 104) / 13) % 2) ? '#8a6448' : '#7c583e');
-    }
+    ctx.drawImage(shopBg, 0, 0);
+    text('うちこみ食堂', 60, 13, { size: 10, bold: true, align: 'center' });
+    text(serving ? `営業中  ${served} / ${totalOrders} 皿` : '準備中（「営業する」で開店）', 300, 14, { size: 11, bold: true, align: 'center', color: '#ffd166' });
 
-    // のれん（店の名前）
-    for (let i = 0; i < 3; i++) rect(14 + i * 42, 0, 40, 30 + Math.sin(t * 1.5 + i) * 1.5, '#1f3a5f');
-    text('うちこみ食堂', 77, 19, { size: 12, bold: true, align: 'center' });
-
-    // 窓と入口
-    rect(250, 30, 70, 40, '#9fc5d9');
-    rect(284, 30, 2, 40, '#6b4a33');
-    rect(250, 49, 70, 2, '#6b4a33');
-    rect(456, 40, 24, 64, '#3a2619');
-    rect(460, 44, 16, 56, '#4e3424');
-
-    // 営業の進み具合
-    text(serving ? `営業中  ${served} / ${totalOrders} 皿` : '準備中（「営業する」で開店）', 160, 20, { size: 11, bold: true, color: '#ffd166' });
-
-    // 厨房（料理人はカウンターの奥）
-    rect(14, 60, 46, 30, '#3b3b46');            // コンロ
-    rect(18, 56, 16, 4, '#555');
+    // 厨房の料理人
     const cooking = !!kitchen.cooking;
-    const flip = cooking ? Math.abs(Math.sin(t * 10)) * 4 : 0;
-    glow(80, 88);
-    person(80, 110 - flip * 0.3, CHEF_LOOK, { chef: true, face: 1 });
     if (cooking) {
-      rect(93, 78 - flip, 12, 3, '#2b2b2b');    // フライパン
-      for (let i = 0; i < 3; i++) rect(95 + i * 4, 70 - flip - ((t * 30 + i * 7) % 10), 2, 2, 'rgba(255,255,255,0.6)');
-      bubble(kitchen.cooking.dish.ja, 80, 52);
+      for (let i = 0; i < 3; i++) rect(14 + i * 9, 22 - ((t * 24 + i * 6) % 14), 3, 3, 'rgba(255,255,255,0.7)');   // 湯気
+      rect(28, 24, 12, 6, '#2b2b2b');   // フライパン
     }
-    rect(0, 100, COUNTER_X + 22, 22, "#a06a47");  // カウンター
-    rect(0, 100, COUNTER_X + 22, 3, "#c08457");
-    ready.forEach((g, i) => {
-      rect(COUNTER_X - i * 14, 96, 12, 3, '#f3ece2');
-      rect(COUNTER_X + 2 - i * 14, 93, 8, 3, dishColor(g.dish));
+    glow(REST_CHEF.x, REST_CHEF.foot - 14);
+    const hop = cooking ? -Math.abs(Math.sin(t * 10)) * 2 : 0;
+    person(REST_CHEF.x, REST_CHEF.foot + hop, CHEF_LOOK, { chef: true });
+
+    // カウンターの料理
+    ready.slice(0, 8).forEach((g, i) => {
+      rect(114, 60 - i * 6 + 10, 12, 5, '#f3ece2');
+      rect(116, 61 - i * 6 + 10, 8, 3, dishColor(g.dish));
     });
 
-    // テーブル
-    for (const tb of TABLES) {
-      rect(tb.x - 28, 128, 8, 14, '#5c3d2e');   // いす
-      rect(tb.x - 16, 116, 36, 5, '#c08457');   // 天板
-      rect(tb.x, 121, 4, 20, '#8b5a3c');        // 脚
-      if (tb.dish) {
-        rect(tb.x - 4, 112, 14, 4, '#f3ece2');
-        rect(tb.x - 2, 109, 10, 3, dishColor(tb.dish));
-      }
-    }
-
-    // 人（奥から順に）
+    // テーブル・人を奥（上）から順に描く
+    const items = TABLES.map((tb) => ({ y: tb.y + 2, draw: () => drawTable(tb) }));
     for (const g of guests) {
       const sit = g.state === 'order' || g.state === 'wait' || g.state === 'eat';
-      person(g.x, sit ? 140 : 146, g.look, { walk: sit ? 0 : g.walk, sit, face: g.face || -1 });
-      if (g.state === 'order') bubble(g.dish.ja, g.x, 96);
-      if (g.state === 'eat' && Math.sin(t * 12) > 0) rect(g.x + 5, 116, 2, 2, '#ffffff');
+      items.push({ y: g.y + (sit ? 3 : 0), draw: () => {
+        person(g.x, g.y, g.look, { walk: sit ? 0 : g.walk, dir: g.dir, sit, face: g.face });
+        if (g.state === 'eat' && Math.sin(t * 12) > 0) rect(g.x + 8, g.y - 14, 2, 2, '#ffffff');
+      } });
     }
-    person(staff.x, 146, STAFF_LOOK, { walk: staff.walk, carry: staff.carry ? { color: dishColor(staff.carry.dish) } : null, face: staff.face || 1 });
+    items.push({ y: staff.y, draw: () => person(staff.x, staff.y, STAFF_LOOK, {
+      walk: staff.walk, dir: staff.dir, face: staff.face, carry: staff.carry ? { color: dishColor(staff.carry.dish) } : null,
+    }) });
+    items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
+
+    // 吹き出し（いちばん手前）
+    for (const g of guests) if (g.state === 'order') bubble(g.dish.ja, g.x, g.y - 26);
+    if (cooking) bubble(kitchen.cooking.dish.ja, REST_CHEF.x + 20, REST_CHEF.foot - 30);
     drawFlyers(dt);   // 営業中に打った文字も料理人へ集まる
   }
 
-  /* ===== ⚙ 工学（施設が並ぶ作業場） ===== */
+  /* ===== ⚙ 工学（見下ろしの作業場） ===== */
   const machinePop = {};   // 設置・強化したときの弾み
-  function drawEng(t, dt) {
-    // 壁と床
-    rect(0, 0, W, 112, '#3d4451');
-    for (let x = 0; x < W; x += 30) rect(x, 0, 1, 112, 'rgba(0,0,0,0.18)');
-    for (let y = 18; y < 112; y += 30) rect(0, y, W, 1, 'rgba(0,0,0,0.12)');
-    rect(0, 112, W, FLOOR - 112, '#2a2f38');
-    for (let x = 0; x < W; x += 20) rect(x, 112, 10, 3, '#e9c46a');   // 注意の黄色線
+  const SLOT_X = [110, 240, 370];
+  const SLOT_FOOT = [78, 140];
 
-    text('工学', 12, 20, { size: 13, bold: true });
+  const engBg = document.createElement('canvas');
+  (() => {
+    engBg.width = W; engBg.height = FLOOR;
+    const g = engBg.getContext('2d');
+    const r = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+    for (let y = 20; y < FLOOR; y += 20) {
+      for (let x = 0; x < W; x += 20) {
+        r(x, y, 20, 20, ((x + y) / 20) % 2 ? '#5a616d' : '#555c68');
+        r(x, y, 20, 1, 'rgba(0,0,0,0.15)');
+        r(x, y, 1, 20, 'rgba(0,0,0,0.15)');
+      }
+    }
+    r(0, 0, W, 20, '#3d4451');
+    r(0, 14, W, 6, '#2e333d');
+    r(0, 6, W, 3, '#7d8799');          // 配管
+    for (let x = 30; x < W; x += 80) r(x, 4, 6, 7, '#9aa3b2');
+    // 施設を置く枠（床の黄色い印）
+    for (const fy of SLOT_FOOT) for (const sx of SLOT_X) {
+      const x = sx - 34; const y = fy - 30;
+      for (const [cx, cy] of [[x, y], [x + 60, y], [x, y + 26], [x + 60, y + 26]]) r(cx, cy, 8, 4, '#e9c46a');
+    }
+  })();
+
+  // 箱（上の面と前の面）
+  function box(x, y, w, top, front, cTop, cFront) {
+    rect(x, y, w, top, cTop);
+    rect(x, y, w, 2, 'rgba(255,255,255,0.25)');
+    rect(x, y + top, w, front, cFront);
+    rect(x, y + top + front - 2, w, 2, 'rgba(0,0,0,0.25)');
+  }
+
+  // 施設の絵（足元が foot、真ん中が cx）
+  function drawMachine(id, cx, foot, t) {
+    rect(cx - 28, foot - 3, 56, 4, 'rgba(0,0,0,0.25)');
+    if (id === 'converter') {
+      box(cx - 26, foot - 34, 52, 14, 20, '#5f8fc4', '#3f6a99');
+      box(cx - 22, foot - 44, 14, 8, 6, '#9fc5e8', '#6f9cc6');    // 入れ口
+      box(cx + 8, foot - 44, 14, 8, 6, '#9fc5e8', '#6f9cc6');     // 出口
+      rect(cx - 16, foot - 16, 32, 10, '#14202c');
+      const ch = 'aiueo'[Math.floor(t * 2) % 5];
+      const out = 'kstnhmr'[Math.floor(t * 2) % 7];
+      text(`${ch}→${out}`, cx, foot - 8, { size: 9, align: 'center', color: '#7bc47f', font: 'Consolas, monospace' });
+    } else if (id === 'refiner') {
+      box(cx - 24, foot - 36, 48, 14, 22, '#8d6fb8', '#644a8c');
+      box(cx + 8, foot - 50, 10, 6, 10, '#6d6f78', '#4b4d55');    // えんとつ
+      for (let i = 0; i < 2; i++) rect(cx + 11 + i * 3, foot - 54 - ((t * 14 + i * 7) % 12), 4, 4, 'rgba(220,220,230,0.6)');
+      const fl = 0.6 + Math.sin(t * 9) * 0.3;
+      rect(cx - 14, foot - 18, 20, 12, '#2a1a1a');
+      rect(cx - 12, foot - 14, 16, 8, `rgba(255, 150, 60, ${fl})`);
+      rect(cx - 18, foot - 44, 8, 2, '#ffd166'); rect(cx - 20, foot - 42, 12, 2, '#ffd166'); rect(cx - 18, foot - 40, 8, 2, '#e9a93a');
+    } else if (id === 'spice') {
+      box(cx - 26, foot - 26, 34, 10, 16, '#7fb07a', '#5a8a55');
+      box(cx + 10, foot - 40, 16, 10, 30, '#c9d6c7', '#9fb09c');  // タンク
+      rect(cx + 6, foot - 20, 4, 3, '#9aa3b2');
+      for (let i = 0; i < 3; i++) {
+        const bx = cx - 22 + i * 10;
+        rect(bx, foot - 34, 6, 8, ['#e76f51', '#e9c46a', '#f3ece2'][i]);
+        rect(bx + 1, foot - 36, 4, 2, '#5c3d2e');
+      }
+    } else if (id === 'tower') {
+      box(cx - 12, foot - 16, 24, 6, 10, '#c0574a', '#8f3a30');
+      rect(cx - 2, foot - 52, 4, 38, '#9aa3b2');
+      rect(cx + 2, foot - 56, 6, 10, '#e76f51');
+      rect(cx + 8, foot - 58, 4, 14, '#e76f51');
+      const w = (t * 2) % 1;
+      ctx.globalAlpha = 1 - w;
+      rect(cx + 14 + w * 14, foot - 56 - w * 4, 2, 10 + w * 8, '#ffd166');
+      ctx.globalAlpha = 1;
+    } else if (id === 'washer') {
+      box(cx - 22, foot - 36, 44, 10, 26, '#e6eef2', '#b9c8d0');
+      ctx.fillStyle = '#3d6e86';
+      ctx.beginPath(); ctx.arc(cx, foot - 15, 9, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < 3; i++) {
+        const a = t * 3 + i * 2.1;
+        rect(cx + Math.cos(a) * 5 - 1, foot - 15 + Math.sin(a) * 5 - 1, 3, 3, '#bfe7f5');
+      }
+      rect(cx + 12, foot - 32, 6, 3, '#7bc47f');
+    } else if (id === 'prepper') {
+      box(cx - 20, foot - 24, 40, 10, 14, '#e9c46a', '#c09a3c');
+      const arm = Math.sin(t * 4) * 4;
+      rect(cx - 2, foot - 44 + arm, 4, 22 - arm, '#6d6f78');
+      box(cx - 8, foot - 50 + arm, 16, 6, 6, '#f4d58d', '#c09a3c');   // 頭
+      rect(cx - 4, foot - 46 + arm, 2, 2, '#2a1d14'); rect(cx + 2, foot - 46 + arm, 2, 2, '#2a1d14');
+      if (Math.sin(t * 4) > 0.8) text('+', cx + 14, foot - 30, { size: 10, bold: true, color: '#ffd166' });
+    }
+  }
+
+  function drawEng(t, dt) {
+    ctx.drawImage(engBg, 0, 0);
+    text('工学', 10, 14, { size: 12, bold: true });
 
     if (!state.eng.unlocked) {
-      rect(0, 0, W, FLOOR, 'rgba(0,0,0,0.45)');
+      rect(0, 0, W, FLOOR, 'rgba(0,0,0,0.5)');
       text('🔒 工学はまだ使えません', W / 2, 80, { size: 14, bold: true, align: 'center' });
       text(`🔧 店の設備から 🪙 ${ENGINEERING_COST.toLocaleString()} で購入するとアンロック`, W / 2, 102, { size: 11, align: 'center', color: '#d8c8b0' });
-      drawFlyers(dt);
       return;
     }
 
     const placed = FACILITIES.filter((f) => state.eng.fac[f.id]).length;
-    text(`施設 ${placed} / ${FACILITIES.length}`, 52, 20, { size: 10, color: '#c9d1dc' });
+    text(`施設 ${placed} / ${FACILITIES.length}`, 44, 14, { size: 10, color: '#c9d1dc' });
 
-    // 施設（ドット絵にするときはここを画像にする）
     FACILITIES.forEach((f, i) => {
       const lv = state.eng.fac[f.id] || 0;
-      const x = 18 + i * 76;
+      const cx = SLOT_X[i % 3];
+      const foot = SLOT_FOOT[Math.floor(i / 3)];
       const pop = Math.max(0, machinePop[f.id] || 0);
       machinePop[f.id] = pop - dt * 2;
-      const y = 56 - pop * 6;
       if (!lv) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(x + 0.5, 56.5, 64, 54);
-        ctx.setLineDash([]);
-        text('未設置', x + 32, 88, { size: 10, align: 'center', color: 'rgba(255,255,255,0.4)' });
-        text(f.name, x + 32, 126, { size: 9, align: 'center', color: 'rgba(255,255,255,0.4)' });
+        text('空き', cx, foot - 12, { size: 10, align: 'center', color: 'rgba(255,255,255,0.35)' });
+        text(f.name, cx, foot + 10, { size: 9, align: 'center', color: 'rgba(255,255,255,0.35)' });
         return;
       }
-      rect(x, y, 64, 54, '#5b6475');
-      rect(x, y, 64, 4, '#7d8799');
-      rect(x + 4, y + 8, 56, 30, '#252a33');
-      // 動いているランプ
-      const on = Math.sin(t * 4 + i) > 0;
-      rect(x + 52, y + 42, 6, 6, on ? '#7bc47f' : '#2f5a33');
-      rect(x + 42, y + 42, 6, 6, '#e9c46a');
-      // 歯車（回る）
-      ctx.save();
-      ctx.translate(x + 12, y + 45);
-      ctx.rotate(t * 2 + i);
-      rect(-4, -1, 8, 2, '#9aa3b2');
-      rect(-1, -4, 2, 8, '#9aa3b2');
-      ctx.restore();
-      text(f.icon, x + 32, y + 30, { size: 18, align: 'center' });
-      text(f.name, x + 32, 126, { size: 9, align: 'center', color: '#f3ece2' });
-      text(`Lv.${lv}`, x + 32, 140, { size: 9, align: 'center', color: '#ffd166', font: 'Consolas, monospace' });
+      drawMachine(f.id, cx, foot - pop * 6, t + i);
+      text(`${f.name}  Lv.${lv}`, cx, foot + 10, { size: 9, bold: true, align: 'center', color: '#f3ece2' });
     });
   }
 
