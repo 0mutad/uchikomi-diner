@@ -645,6 +645,7 @@
       renderPanel();
     } else if (act === 'slot-sel') {
       engSel = Number(b.dataset.i);
+      showSlot(engSel);
       renderPanel();
     } else if (act === 'slot-buy') {
       const cost = slotCost(state.eng.slotCount);
@@ -652,6 +653,7 @@
       state.coins -= cost;
       engSel = state.eng.slotCount;
       state.eng.slotCount++;
+      showSlot(engSel);
       save(); renderPanel(); paintHud();
     } else if (act === 'build') {
       const f = FACILITIES.find((x) => x.id === id);
@@ -811,7 +813,6 @@
   }
 
   const CHEF_LOOK = { skin: '#f2c9a0', hair: '#3a2619', shirt: '#ffffff', pants: '#3b3b46' };
-  const STAFF_LOOK = { skin: '#f2c9a0', hair: '#1f1a17', shirt: '#7a2e1d', pants: '#2f2a28' };
   const GUEST_LOOKS = [
     { skin: '#f2c9a0', hair: '#3a2619', shirt: '#4f7cac', pants: '#2c3e50' },
     { skin: '#e8b98f', hair: '#1f1a17', shirt: '#6a994e', pants: '#3d405b' },
@@ -952,45 +953,42 @@
   let served = 0;
   let totalOrders = 0;
   let guests = [];
-  let spawnWait = 0;
   const TABLES = [[200, 70], [290, 70], [380, 70], [200, 122], [290, 122], [380, 122]]
     .map(([x, y]) => ({ x, y, guest: null, dish: null }));
   const AISLE_Y = 98;          // テーブルの列の間の通路
-  const DOOR = { x: 455, y: 176 };
-  const STAFF_HOME = { x: 146, y: AISLE_Y };
-  const PICK = { x: 140, y: 64 };   // カウンターの前（料理を受け取る場所）
   const SPEED = 110;
-  const kitchen = { queue: [], cooking: null, t: 0 };
-  let ready = [];              // カウンターに置かれた料理（お客さん）
-  const staff = { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, walk: 0, face: 1 };
+  const kitchen = { cooking: null, t: 0 };
+  let ready = [];              // できあがってカウンターに置かれた料理
 
-  /* 営業の流れ: お客さんはすでに席と行列にずらっと並んでいる。
-   * 厨房が1皿ずつ作り（最初は10秒。🔪包丁で短くなる）、店員が運び、食べたら払って帰る。
-   * 席が空くと行列の先頭が座る */
+  /* 営業の流れ:
+   * 予約した皿の数だけお客さんが来て、カウンターから店の奥・右の壁ぞいに行列を作る。
+   * 厨房は予約の料理を1皿ずつ作る（最初は10秒。🔪包丁で短くなる）。
+   * できた料理は行列の先頭の人が受け取り、空いた席で食べ、しばらくしたら店を出る */
   const cookTime = () => upgValue('knife');
-  const LINE_X = 456;
-  const LINE_FRONT_Y = 136;
-  const LINE_SHOW = 5;         // 行列に見せる人数
-  let line = [];               // 行列に並んでいる人の見た目
+  const EAT_TIME = 6;
+  const QUEUE = [[140, 86], [140, 42], [446, 42], [446, 150]];   // 行列の道すじ（先頭 → 最後尾）
+  const QUEUE_GAP = 14;
+  const EXIT = { x: 428, y: 178 };
+  const QUEUE_LEN = QUEUE.slice(1).reduce((n, p, i) => n + Math.hypot(p[0] - QUEUE[i][0], p[1] - QUEUE[i][1]), 0);
+  const QUEUE_MAX = Math.floor(QUEUE_LEN / QUEUE_GAP) + 1;   // 店の中に並べる人数
+  let pending = 0;             // まだ店に入っていないお客さん
+  let queue = [];              // 並んでいる人（先頭から）
+  let spawnWait = 0;
+
+  // 行列の道すじの上で、先頭から d の位置
+  function queuePos(d) {
+    for (let i = 1; i < QUEUE.length; i++) {
+      const [ax, ay] = QUEUE[i - 1];
+      const [bx, by] = QUEUE[i];
+      const len = Math.hypot(bx - ax, by - ay);
+      if (d <= len) return [ax + ((bx - ax) * d) / len, ay + ((by - ay) * d) / len, bx - ax, by - ay];
+      d -= len;
+    }
+    const [x, y] = QUEUE[QUEUE.length - 1];
+    return [x, y + d, 0, 1];   // 最後尾より後ろは入口の外
+  }
 
   const randomLook = () => GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)];
-
-  function seatGuest(tb, fromLine) {
-    const [sx, sy] = seatOf(tb);
-    const g = {
-      dish: orders.shift(), table: tb, state: 'enter', t: 0, face: -1,
-      look: fromLine ? line.shift() || randomLook() : randomLook(),
-    };
-    if (fromLine) {
-      Object.assign(g, { x: LINE_X, y: LINE_FRONT_Y, path: [[LINE_X, AISLE_Y], [sx, AISLE_Y], [sx, sy]] });
-      if (orders.length > line.length) line.push(randomLook());
-    } else {
-      // 開店の時点ですでに座っている
-      Object.assign(g, { x: sx, y: sy, path: [], state: 'order', t: 0.3 + Math.random() * 0.8, face: 1 });
-    }
-    tb.guest = g;
-    guests.push(g);
-  }
 
   function startServe(rows) {
     orders = [];
@@ -1001,17 +999,15 @@
       [orders[i], orders[j]] = [orders[j], orders[i]];
     }
     totalOrders = orders.length;
+    pending = orders.length;
     served = 0;
     unpaid = lastResult.total;
     guests = [];
+    queue = [];
     ready = [];
-    kitchen.queue = [];
     kitchen.cooking = null;
-    Object.assign(staff, { x: STAFF_HOME.x, y: STAFF_HOME.y, path: [], state: 'idle', carry: null, face: 1 });
     TABLES.forEach((tb) => { tb.guest = null; tb.dish = null; });
-    for (const tb of TABLES) if (orders.length) seatGuest(tb, false);
-    line = [];
-    for (let i = 0; i < Math.min(LINE_SHOW, orders.length); i++) line.push(randomLook());
+    spawnWait = 0;
     serving = true;
     setView('restaurant');
   }
@@ -1021,7 +1017,7 @@
     unpaid = 0;
     orders = [];
     guests = [];
-    line = [];
+    queue = [];
     view = 'keyboard';
     open('result');
   }
@@ -1045,16 +1041,54 @@
   }
 
   const seatOf = (tb) => [tb.x - 21, tb.y + 4];          // お客さんは左の席
-  const standOf = (tb) => [tb.x + 21, tb.y + 4];         // 店員は右の席の横に立つ
 
   function updateServe(dt) {
+    // お客さんが入口から入ってきて、行列の最後に並ぶ
+    spawnWait -= dt;
+    if (pending > 0 && queue.length < QUEUE_MAX && spawnWait <= 0) {
+      const g = { look: randomLook(), state: 'queue', d: QUEUE_LEN + 40, path: [], face: -1, walk: 0 };
+      [g.x, g.y] = queuePos(g.d);
+      queue.push(g);
+      guests.push(g);
+      pending--;
+      spawnWait = 0.35;
+    }
+
+    // 行列: 自分の場所（前の人の後ろ）まで道すじにそって進む
+    queue.forEach((g, i) => {
+      const target = i * QUEUE_GAP;
+      if (g.d > target) {
+        g.d = Math.max(target, g.d - SPEED * dt);
+        const [x, y, dx, dy] = queuePos(g.d);
+        g.x = x; g.y = y;
+        g.dir = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+        if (dx) g.face = -Math.sign(dx);   // 道すじを逆向き（先頭へ）に歩く
+        g.walk += dt;
+      } else g.walk = 0;
+    });
+
+    // 厨房: 予約の料理を1皿ずつ時間をかけて作る
+    if (!kitchen.cooking && orders.length) { kitchen.cooking = orders.shift(); kitchen.t = cookTime(); }
+    if (kitchen.cooking) {
+      kitchen.t -= dt;
+      if (kitchen.t <= 0) { ready.push(kitchen.cooking); kitchen.cooking = null; }
+    }
+
+    // 先頭の人が料理を受け取って、空いている席へ
+    const front = queue[0];
+    const free = TABLES.filter((tb) => !tb.guest);
+    if (front && front.d <= 0.5 && ready.length && free.length) {
+      queue.shift();
+      const tb = free[Math.floor(Math.random() * free.length)];
+      const [sx, sy] = seatOf(tb);
+      Object.assign(front, { state: 'toSeat', dish: ready.shift(), table: tb, path: [[QUEUE[0][0], AISLE_Y], [sx, AISLE_Y], [sx, sy]] });
+      tb.guest = front;
+    }
+
     for (let i = guests.length - 1; i >= 0; i--) {
       const g = guests[i];
-      if (g.state === 'enter') {
-        if (moveAlong(g, dt)) { g.state = 'order'; g.t = 0.6; g.face = 1; }
-      } else if (g.state === 'order') {
-        g.t -= dt;
-        if (g.t <= 0) { g.state = 'wait'; kitchen.queue.push(g); }
+      if (g.state === 'toSeat') {
+        if (moveAlong(g, dt)) { g.state = 'eat'; g.t = EAT_TIME; g.face = 1; g.table.dish = g.dish; }
       } else if (g.state === 'eat') {
         g.t -= dt;
         if (g.t <= 0) {
@@ -1062,12 +1096,10 @@
           unpaid = Math.max(0, unpaid - price);
           served++;
           floatText(`+${price}`, g.table.x, g.table.y - 18);
-          const tb = g.table;
-          tb.dish = null;
-          tb.guest = null;
+          g.table.dish = null;
+          g.table.guest = null;
           g.state = 'leave';
-          g.path = [[g.x, AISLE_Y], [LINE_X - 14, AISLE_Y], [LINE_X - 14, DOOR.y]];
-          if (orders.length) seatGuest(tb, true);   // 行列の先頭が座る
+          g.path = [[g.x, AISLE_Y], [EXIT.x, AISLE_Y], [EXIT.x, EXIT.y]];
           paintHud();
         }
       } else if (g.state === 'leave') {
@@ -1075,38 +1107,7 @@
       }
     }
 
-    // 厨房: 1皿ずつ時間をかけて作る
-    if (!kitchen.cooking && kitchen.queue.length) { kitchen.cooking = kitchen.queue.shift(); kitchen.t = cookTime(); }
-    if (kitchen.cooking) {
-      kitchen.t -= dt;
-      if (kitchen.t <= 0) { ready.push(kitchen.cooking); kitchen.cooking = null; }
-    }
-
-    // 店員: カウンターの料理を席へ運ぶ
-    const goPick = () => { staff.state = 'pick'; staff.path = [[staff.x, AISLE_Y], [PICK.x, AISLE_Y], [PICK.x, PICK.y]]; };
-    if (staff.state === 'idle' && ready.length) goPick();
-    if (staff.state === 'pick') {
-      if (moveAlong(staff, dt)) {
-        staff.carry = ready.shift();
-        staff.state = 'deliver';
-        const [x, y] = standOf(staff.carry.table);
-        staff.path = [[PICK.x, AISLE_Y], [x, AISLE_Y], [x, y]];
-      }
-    } else if (staff.state === 'deliver') {
-      if (moveAlong(staff, dt)) {
-        const g = staff.carry;
-        g.table.dish = g.dish;
-        g.state = 'eat';
-        g.t = 1.3;
-        staff.carry = null;
-        if (ready.length) goPick();
-        else { staff.state = 'back'; staff.path = [[staff.x, AISLE_Y], [STAFF_HOME.x, STAFF_HOME.y]]; }
-      }
-    } else if (staff.state === 'back') {
-      if (moveAlong(staff, dt)) { staff.state = 'idle'; staff.face = 1; }
-    }
-
-    if (!orders.length && !guests.length && !ready.length && !kitchen.cooking && !kitchen.queue.length && !staff.carry) finishServe();
+    if (!pending && !orders.length && !kitchen.cooking && !ready.length && !guests.length) finishServe();
   }
 
   function bubble(str, x, y) {
@@ -1193,36 +1194,27 @@
     person(REST_CHEF.x, REST_CHEF.foot + hop, CHEF_LOOK, { chef: true });
 
     // カウンターの料理
-    ready.slice(0, 8).forEach((g, i) => {
-      rect(114, 60 - i * 6 + 10, 12, 5, '#f3ece2');
-      rect(116, 61 - i * 6 + 10, 8, 3, dishColor(g.dish));
+    ready.slice(0, 8).forEach((d, i) => {
+      rect(114, 80 - i * 6, 12, 5, '#f3ece2');
+      rect(116, 81 - i * 6, 8, 3, dishColor(d));
     });
 
     // テーブル・人を奥（上）から順に描く
     const items = TABLES.map((tb) => ({ y: tb.y + 2, draw: () => drawTable(tb) }));
     for (const g of guests) {
-      const sit = g.state === 'order' || g.state === 'wait' || g.state === 'eat';
+      const sit = g.state === 'eat';
       items.push({ y: g.y + (sit ? 3 : 0), draw: () => {
-        person(g.x, g.y, g.look, { walk: sit ? 0 : g.walk, dir: g.dir, sit, face: g.face });
-        if (g.state === 'eat' && Math.sin(t * 12) > 0) rect(g.x + 8, g.y - 14, 2, 2, '#ffffff');
+        person(g.x, g.y, g.look, { walk: sit ? 0 : g.walk, dir: g.dir, sit, face: g.face,
+          carry: g.state === 'toSeat' ? { color: dishColor(g.dish) } : null });
+        if (sit && Math.sin(t * 12) > 0) rect(g.x + 8, g.y - 14, 2, 2, '#ffffff');
       } });
     }
-    // 行列（入口の横に並んで待っている人）
-    line.forEach((look, i) => {
-      const y = LINE_FRONT_Y - i * 16;
-      items.push({ y, draw: () => person(LINE_X, y, look, { face: -1 }) });
-    });
-    items.push({ y: staff.y, draw: () => person(staff.x, staff.y, STAFF_LOOK, {
-      walk: staff.walk, dir: staff.dir, face: staff.face, carry: staff.carry ? { color: dishColor(staff.carry.dish) } : null,
-    }) });
     items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
 
-    // 吹き出し（いちばん手前）
-    for (const g of guests) if (g.state === 'order') bubble(g.dish.ja, g.x, g.y - 26);
-    const waiting = orders.length - line.length;
-    if (serving && waiting > 0) text(`ほか ${waiting}人`, LINE_X - 12, LINE_FRONT_Y + 12, { size: 9, bold: true, align: 'right', color: '#ffd166' });
+    // 店に入りきれずに外で待っている人
+    if (serving && pending > 0) text(`ほか ${pending}人`, 432, 150, { size: 9, bold: true, align: 'right', color: '#ffd166' });
     if (cooking) {
-      bubble(kitchen.cooking.dish.ja, REST_CHEF.x + 20, REST_CHEF.foot - 30);
+      bubble(kitchen.cooking.ja, REST_CHEF.x + 20, REST_CHEF.foot - 30);
       // 調理の進み具合
       const k = 1 - Math.max(0, kitchen.t) / cookTime();
       rect(REST_CHEF.x - 18, REST_CHEF.foot + 4, 36, 5, '#2a1d14');
@@ -1234,56 +1226,85 @@
 
   /* ===== ⚙ 工学（見下ろしの作業場） ===== */
   const machinePop = {};   // 設置・強化したときの弾み（枠ごと）
-  // 枠の位置（4列×2段）。左は倉庫、段の間は作業員が歩く通路
-  const SLOT_X = [146, 230, 314, 398];
-  const SLOT_FOOT = [80, 144];
-  const ENG_AISLE = 96;
-  const STORE = { x: 62, y: ENG_AISLE };
-  const slotPos = (i) => ({ cx: SLOT_X[i % 4], foot: SLOT_FOOT[Math.floor(i / 4)] });
+  /* マップ（Rusty's Retirement を参考に、水路と道で区画が分かれた土地）。
+   * 横に長いのでホイール・ドラッグで横にスクロールする。
+   * 区画A（倉庫のある最初の土地）→ 区画B → 区画C の順に枠が開いていく */
+  const MAP_W = 720;
+  const ENG_ROAD = 98;                 // 作業員が歩く道
+  const STORE = { x: 54, y: ENG_ROAD };
+  const SLOTS = [[150, 82], [70, 146], [162, 146], [262, 82], [372, 82], [318, 146], [552, 82], [626, 146]];
+  const WATER_X = [200, 470];          // 縦の水路
+  const slotPos = (i) => ({ cx: SLOTS[i][0], foot: SLOTS[i][1] });
+  let engCam = 0;
+  const camMax = () => MAP_W - W;
+  const clampCam = (v) => Math.max(0, Math.min(camMax(), v));
   function slotAt(x, y) {
+    const mx = x + engCam;
     for (let i = 0; i < ENG_SLOTS_MAX; i++) {
       const { cx, foot } = slotPos(i);
-      if (x >= cx - 38 && x <= cx + 38 && y >= foot - 48 && y <= foot + 6) return i;
+      if (mx >= cx - 38 && mx <= cx + 38 && y >= foot - 48 && y <= foot + 6) return i;
     }
     return -1;
   }
+  function showSlot(i) {
+    const { cx } = slotPos(i);
+    if (cx - engCam < 50 || cx - engCam > W - 50) engCam = clampCam(cx - W / 2);
+  }
 
-  // 床・壁・倉庫（動かない部分）
+  // 地面・水路・道・倉庫・飾り（動かない部分）は一度だけ描く
   const engBg = document.createElement('canvas');
   (() => {
-    engBg.width = W; engBg.height = FLOOR;
+    engBg.width = MAP_W; engBg.height = FLOOR;
     const g = engBg.getContext('2d');
     const r = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
-    for (let y = 20; y < FLOOR; y += 16) {
-      for (let x = 0; x < W; x += 16) {
-        r(x, y, 16, 16, ((x + y) / 16) % 2 ? '#5a616d' : '#565d69');
-        r(x, y, 16, 1, 'rgba(0,0,0,0.12)');
-        r(x, y, 1, 16, 'rgba(0,0,0,0.12)');
-      }
+    let seed = 7;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    // 草地
+    r(0, 0, MAP_W, FLOOR, '#5b8c3a');
+    for (let i = 0; i < 900; i++) r(Math.floor(rnd() * MAP_W / 2) * 2, Math.floor(rnd() * FLOOR / 2) * 2, 2, 2, rnd() < 0.5 ? '#68994a' : '#4f7d33');
+    for (let i = 0; i < 120; i++) {   // 草のふさ
+      const x = Math.floor(rnd() * MAP_W / 2) * 2; const y = Math.floor(rnd() * FLOOR / 2) * 2;
+      r(x, y, 2, 4, '#7bb057'); r(x + 2, y - 2, 2, 4, '#7bb057');
     }
-    // 通路（白い線）
-    r(0, ENG_AISLE - 9, W, 18, '#4d535e');
-    for (let x = 4; x < W; x += 16) r(x, ENG_AISLE - 1, 8, 2, '#c9ccd2');
-    // 奥の壁と配管
-    r(0, 0, W, 20, '#3d4451');
-    r(0, 14, W, 6, '#2e333d');
-    r(0, 6, W, 3, '#7d8799');
-    for (let x = 30; x < W; x += 80) r(x, 4, 6, 7, '#9aa3b2');
-    // 倉庫（左）: 棚と木箱
-    r(6, 26, 88, 54, '#4a4036');
-    r(6, 26, 88, 3, '#6b5a48');
-    for (let row = 0; row < 3; row++) {
-      r(10, 34 + row * 16, 80, 3, '#7a6450');
-      for (let i = 0; i < 4; i++) {
-        if ((row + i) % 3 === 2) continue;
-        r(13 + i * 19, 37 + row * 16 - 9, 14, 9, '#b07d4a');
-        r(13 + i * 19, 37 + row * 16 - 9, 14, 2, '#c99560');
-        r(19 + i * 19, 37 + row * 16 - 9, 2, 9, '#8b5a3c');
-      }
+    // 道（土）
+    r(0, ENG_ROAD - 7, MAP_W, 14, '#a07c52');
+    r(0, ENG_ROAD - 7, MAP_W, 2, '#7f603e');
+    r(0, ENG_ROAD + 5, MAP_W, 2, '#7f603e');
+    for (let i = 0; i < 160; i++) r(Math.floor(rnd() * MAP_W / 2) * 2, ENG_ROAD - 4 + Math.floor(rnd() * 4) * 2, 2, 2, rnd() < 0.5 ? '#b08c60' : '#8f6d47');
+    // 水路（縦）と池
+    const water = (x, y, w, h) => {
+      r(x - 2, y, w + 4, h, '#3f6a3a');           // 岸
+      r(x, y, w, h, '#3b6f9a');
+      r(x, y, 2, h, '#2d5577'); r(x + w - 2, y, 2, h, '#2d5577');
+      for (let yy = y + 4; yy < y + h; yy += 10) r(x + 3 + ((yy / 10) % 2) * 3, yy, 4, 1, '#6a9ec8');
+    };
+    for (const wx of WATER_X) water(wx, 0, 14, FLOOR);
+    water(640, 22, 62, 40);
+    water(392, 116, 56, 30);
+    // 橋（道が水路をまたぐところ）
+    for (const wx of WATER_X) {
+      r(wx - 4, ENG_ROAD - 9, 22, 18, '#9c6b3f');
+      for (let x = wx - 4; x < wx + 18; x += 4) r(x, ENG_ROAD - 9, 1, 18, '#7a5030');
+      r(wx - 4, ENG_ROAD - 10, 22, 2, '#6b4426'); r(wx - 4, ENG_ROAD + 8, 22, 2, '#6b4426');
     }
-    r(6, 108, 88, 40, '#4f4a44');
-    r(6, 108, 88, 3, '#6b665f');
-    for (let i = 0; i < 3; i++) { r(14 + i * 26, 118, 20, 16, '#b07d4a'); r(14 + i * 26, 118, 20, 3, '#c99560'); }
+    // 倉庫（区画Aの左上）
+    r(10, 18, 84, 22, '#6d7d96');                 // 屋根
+    r(10, 18, 84, 3, '#8a9ab3');
+    r(50, 18, 4, 22, '#596a82');
+    r(14, 40, 76, 30, '#8a7a66');                 // 壁
+    r(40, 50, 26, 20, '#3a2c22');                 // 入口
+    r(42, 52, 22, 2, '#5a4636');
+    r(20, 46, 12, 8, '#9fc5d9'); r(74, 46, 12, 8, '#9fc5d9');
+    r(54, 70, 4, ENG_ROAD - 77, '#a07c52');      // 入口から道まで
+    // 飾り（花・しげみ・石）
+    const flower = (x, y, c) => { r(x, y, 2, 2, c); r(x + 3, y + 2, 2, 2, c); r(x - 2, y + 3, 2, 2, c); r(x + 1, y + 4, 1, 3, '#3f6a2a'); };
+    const bush = (x, y) => { r(x, y + 2, 16, 8, '#3f6a2a'); r(x + 2, y, 12, 8, '#4f8a36'); r(x + 4, y + 1, 4, 2, '#6aa84a'); };
+    const rock = (x, y) => { r(x, y, 10, 6, '#8d9290'); r(x + 2, y - 2, 6, 2, '#a5aaa8'); r(x, y + 6, 10, 2, '#5f6462'); };
+    [[110, 20, '#f4a6c0'], [118, 26, '#ffd166'], [236, 24, '#ffffff'], [430, 24, '#f4a6c0'], [500, 130, '#ffd166'],
+      [520, 26, '#ffffff'], [700, 120, '#f4a6c0'], [26, 120, '#ffd166'], [300, 24, '#e76f51'], [680, 80, '#ffffff']]
+      .forEach(([x, y, c]) => { flower(x, y, c); flower(x + 8, y + 5, c); });
+    [[104, 124], [226, 132], [452, 20], [664, 108], [8, 82]].forEach(([x, y]) => bush(x, y));
+    [[188, 30], [420, 60], [596, 30], [700, 140], [230, 60]].forEach(([x, y]) => rock(x, y));
   })();
 
   // 作業員（施設1つにつき1人）。倉庫と施設を行き来して機械を動かす（見た目だけ）
@@ -1298,13 +1319,13 @@
       const { cx, foot } = slotPos(w.slot);
       const spot = [cx + 30, foot + 2];
       if (w.state === 'go' && !w.path.length && (w.x !== spot[0] || w.y !== spot[1])) {
-        w.path = [[w.x, ENG_AISLE], [spot[0], ENG_AISLE], spot];
+        w.path = [[w.x, ENG_ROAD], [spot[0], ENG_ROAD], spot];
       }
       if (w.state === 'go') {
         if (moveAlong(w, dt * 0.6)) { w.state = 'work'; w.t = 3 + Math.random() * 3; w.face = -1; }
       } else if (w.state === 'work') {
         w.t -= dt;
-        if (w.t <= 0) { w.state = 'carry'; w.path = [[w.x, ENG_AISLE], [STORE.x, STORE.y]]; }
+        if (w.t <= 0) { w.state = 'carry'; w.path = [[w.x, ENG_ROAD], [STORE.x, STORE.y]]; }
       } else if (w.state === 'carry') {
         if (moveAlong(w, dt * 0.6)) { w.state = 'store'; w.t = 0.8; }
       } else if (w.state === 'store') {
@@ -1314,9 +1335,20 @@
     }
   }
 
-  // マップの枠をクリックして選ぶ
+  // マップの操作: 枠をクリックして選ぶ／ホイール・ドラッグで横スクロール
+  let drag = null;
+  canvas.addEventListener('mousedown', (ev) => {
+    if (view !== 'eng') return;
+    drag = { x: ev.clientX, cam: engCam, moved: false };
+  });
+  window.addEventListener('mouseup', () => { setTimeout(() => { drag = null; }, 0); });
+  canvas.addEventListener('wheel', (ev) => {
+    if (view !== 'eng') return;
+    ev.preventDefault();
+    engCam = clampCam(engCam + (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY) * 0.6);
+  }, { passive: false });
   canvas.addEventListener('click', (ev) => {
-    if (view !== 'eng' || !state.eng.unlocked) return;
+    if (view !== 'eng' || !state.eng.unlocked || (drag && drag.moved)) return;
     const r = canvas.getBoundingClientRect();
     const i = slotAt(ev.clientX - r.left, ev.clientY - r.top);
     if (i < 0 || i > state.eng.slotCount) return;   // 買える枠は次の1つだけ
@@ -1324,9 +1356,14 @@
     if (openPanel !== 'eng') open('eng'); else renderPanel();
   });
   canvas.addEventListener('mousemove', (ev) => {
+    if (drag && view === 'eng' && ev.buttons & 1) {
+      const dx = ev.clientX - drag.x;
+      if (Math.abs(dx) > 4) drag.moved = true;
+      engCam = clampCam(drag.cam - dx);
+    }
     const r = canvas.getBoundingClientRect();
     const i = view === 'eng' && state.eng.unlocked ? slotAt(ev.clientX - r.left, ev.clientY - r.top) : -1;
-    canvas.style.cursor = i >= 0 && i <= state.eng.slotCount ? 'pointer' : 'default';
+    canvas.style.cursor = i >= 0 && i <= state.eng.slotCount ? 'pointer' : (view === 'eng' ? 'grab' : 'default');
   });
 
   // 箱（上の面と前の面）
@@ -1394,21 +1431,20 @@
   }
 
   function drawEng(t, dt) {
-    ctx.drawImage(engBg, 0, 0);
-    text('工学', 10, 14, { size: 12, bold: true });
-    text('倉庫', 50, 102, { size: 8, align: 'center', color: '#c9d1dc' });
-
     if (!state.eng.unlocked) {
+      ctx.drawImage(engBg, 0, 0);
       rect(0, 0, W, FLOOR, 'rgba(0,0,0,0.5)');
       text('🔒 工学はまだ使えません', W / 2, 80, { size: 14, bold: true, align: 'center' });
       text(`🔧 店の設備から 🪙 ${ENGINEERING_COST.toLocaleString()} で購入するとアンロック`, W / 2, 102, { size: 11, align: 'center', color: '#d8c8b0' });
       return;
     }
-
     const e = state.eng;
-    const used = e.slots.slice(0, e.slotCount).filter(Boolean).length;
-    text(`枠 ${used} / ${e.slotCount}　（枠をクリックして建てる）`, 44, 14, { size: 9, color: '#c9d1dc' });
     updateWorkers(dt);
+
+    ctx.save();
+    ctx.translate(-R(engCam), 0);
+    ctx.drawImage(engBg, 0, 0);
+    text('倉庫', 52, 66, { size: 8, bold: true, align: 'center', color: '#f3ece2' });
 
     const items = [];
     for (let i = 0; i < ENG_SLOTS_MAX; i++) {
@@ -1417,22 +1453,28 @@
       const x = cx - 34;
       const y = foot - 40;
       if (i >= e.slotCount) {
-        // まだ使えない枠
-        rect(x, y, 68, 40, 'rgba(0,0,0,0.25)');
+        // まだ使えない土地（草ぼうぼう）
+        rect(x + 4, y + 4, 60, 32, 'rgba(40,70,30,0.45)');
         if (i === e.slotCount) {
-          text('＋', cx, foot - 18, { size: 14, bold: true, align: 'center', color: 'rgba(255,255,255,0.5)' });
-          text('枠を増やす', cx, foot - 4, { size: 8, align: 'center', color: 'rgba(255,255,255,0.5)' });
+          rect(cx - 1, foot - 30, 2, 22, '#7a5030');                 // 立て札
+          rect(cx - 16, foot - 34, 32, 12, '#c99560');
+          text('＋', cx, foot - 25, { size: 10, bold: true, align: 'center', color: '#3a2619' });
+          text('枠を増やす', cx, foot + 2, { size: 8, bold: true, align: 'center', color: '#f3ece2' });
         } else {
           text('🔒', cx, foot - 14, { size: 10, align: 'center' });
         }
       } else if (!s) {
-        // 空き枠（床の黄色い印）
-        for (const [px, py] of [[x, y], [x + 60, y], [x, y + 36], [x + 60, y + 36]]) rect(px, py, 8, 4, '#e9c46a');
-        text('＋ 空き', cx, foot - 16, { size: 10, align: 'center', color: 'rgba(255,255,255,0.45)' });
+        // 空き枠（石の土台）
+        rect(x + 2, y + 6, 64, 32, '#7d8279');
+        rect(x + 4, y + 8, 60, 28, '#969b91');
+        for (let gx = x + 4; gx < x + 64; gx += 12) rect(gx, y + 8, 1, 28, 'rgba(0,0,0,0.12)');
+        rect(x + 2, y + 36, 64, 3, '#5f645c');
+        text('＋ 空き', cx, foot - 15, { size: 10, bold: true, align: 'center', color: 'rgba(255,255,255,0.75)' });
       } else {
         const pop = Math.max(0, machinePop[i] || 0);
         machinePop[i] = pop - dt * 2;
         const f = FACILITIES.find((q) => q.id === s.fac);
+        rect(x + 2, y + 6, 64, 33, '#7d8279');   // 土台
         items.push({ y: foot, draw: () => {
           drawMachine(s.fac, cx, foot - pop * 6, t + i);
           for (let l = 0; l < s.lv; l++) rect(cx - 26 + l * 6, foot - 1, 4, 3, '#ffd166');   // レベルの印
@@ -1457,6 +1499,24 @@
       } });
     }
     items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
+    // 水のきらめき
+    for (let k = 0; k < 4; k++) {
+      const wx = WATER_X[k % 2] + 4 + ((k * 5) % 6);
+      const wy = ((t * 18 + k * 40) % FLOOR);
+      rect(wx, wy, 2, 2, 'rgba(255,255,255,0.6)');
+    }
+    ctx.restore();
+
+    // 画面に固定する表示（見出し・スクロールの目印）
+    const used = e.slots.slice(0, e.slotCount).filter(Boolean).length;
+    rect(0, 0, 210, 20, 'rgba(20,28,16,0.6)');
+    text(`工学  枠 ${used} / ${e.slotCount}`, 8, 14, { size: 11, bold: true });
+    text('ドラッグ・ホイールで移動', 104, 14, { size: 8, color: '#d8e6c8' });
+    if (engCam > 2) text('◀', 6, 100, { size: 14, bold: true, color: 'rgba(255,255,255,0.8)' });
+    if (engCam < camMax() - 2) text('▶', W - 18, 100, { size: 14, bold: true, color: 'rgba(255,255,255,0.8)' });
+    const bw = (W / MAP_W) * W;
+    rect(0, FLOOR - 3, W, 3, 'rgba(0,0,0,0.3)');
+    rect((engCam / MAP_W) * W, FLOOR - 3, bw, 3, 'rgba(255,255,255,0.6)');
   }
 
   function drawFloats(dt) {
