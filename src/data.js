@@ -244,3 +244,24 @@ const slotCost = (count) => Math.round(3000 * Math.pow(1.8, count - ENG_SLOTS_ST
 // 同じ施設を建てられる数。効果は同じ施設のレベルの合計で決まる
 const FAC_LIMIT = { converter: 2, refiner: 1, spice: 2, tower: 1, washer: 2, prepper: 3 };
 const REMOVE_REFUND = 0.5;   // 撤去したときに戻るお金（かけた額の割合）
+
+/* 来店するお客さん。レア度 ★1〜★3。図鑑の「人」タブに載る（絵は仮。あとでPNGにする） */
+const RARITY_RATE = { 1: 0.85, 2: 0.13, 3: 0.02 };   // 1人ごとに、どのレア度の人が来るか
+const GUESTS = [
+  { id: 'salaryman', name: '会社員', rarity: 1, look: { skin: '#f2c9a0', hair: '#1f1a17', shirt: '#4a5568', pants: '#2d3748' }, desc: 'お昼休みにさっと食べて帰る。' },
+  { id: 'student', name: '学生', rarity: 1, look: { skin: '#f6d5b5', hair: '#3a2619', shirt: '#2c4a7a', pants: '#1f2f4f' }, desc: '大盛りがうれしい年ごろ。' },
+  { id: 'obachan', name: 'おばちゃん', rarity: 1, look: { skin: '#eac8a4', hair: '#7a4a8c', shirt: '#e76f51', pants: '#5c3d2e' }, desc: '常連さん。おしゃべりが長い。' },
+  { id: 'ojiisan', name: 'おじいさん', rarity: 1, look: { skin: '#f2c9a0', hair: '#c9c9c9', shirt: '#8d6e63', pants: '#424242' }, desc: '毎朝同じ席に座る。' },
+  { id: 'tourist', name: '観光客', rarity: 1, look: { skin: '#f6d5b5', hair: '#e9c46a', shirt: '#6a994e', pants: '#3d405b' }, desc: '写真をたくさん撮っていく。' },
+  { id: 'family', name: '家族づれ', rarity: 1, look: { skin: '#e8b98f', hair: '#5c3d2e', shirt: '#e9c46a', pants: '#264653' }, desc: 'みんなで分けて食べる。' },
+  { id: 'runner', name: 'ランナー', rarity: 1, look: { skin: '#d9a77c', hair: '#2b2b2b', shirt: '#2a9d8f', pants: '#1d3557' }, desc: '走ったあとのごほうび。' },
+  { id: 'artist', name: '絵かき', rarity: 1, look: { skin: '#f2c9a0', hair: '#a0522d', shirt: '#9b5de5', pants: '#22223b' }, desc: '料理をスケッチしてから食べる。' },
+  { id: 'critic', name: '料理評論家', rarity: 2, look: { skin: '#f2c9a0', hair: '#3a2619', shirt: '#1d1d1d', pants: '#1d1d1d' }, desc: 'ひと口ごとにメモを取る。' },
+  { id: 'sumo', name: 'お相撲さん', rarity: 2, look: { skin: '#e8b98f', hair: '#1f1a17', shirt: '#e8b98f', pants: '#3b5ba5' }, desc: 'ちゃんこ鍋が大好き。' },
+  { id: 'detective', name: '探偵', rarity: 2, look: { skin: '#f6d5b5', hair: '#5c3d2e', shirt: '#a68a64', pants: '#4a3b2a' }, desc: '隠し味を当てるのが得意。' },
+  { id: 'idol', name: 'アイドル', rarity: 2, look: { skin: '#f6d5b5', hair: '#f4a6c0', shirt: '#ffffff', pants: '#f4a6c0' }, desc: 'お忍びで来店中。' },
+  { id: 'king', name: '王さま', rarity: 3, look: { skin: '#f2c9a0', hair: '#ffd166', shirt: '#b5172b', pants: '#5a189a' }, desc: '遠い国からうわさを聞いてやってきた。' },
+  { id: 'ninja', name: '忍者', rarity: 3, look: { skin: '#f2c9a0', hair: '#1b1b2a', shirt: '#2b2b3a', pants: '#1b1b2a' }, desc: '気づいたら食べ終わっている。' },
+  { id: 'alien', name: '宇宙人', rarity: 3, look: { skin: '#8ad17a', hair: '#8ad17a', shirt: '#a8b8c8', pants: '#6b7b8b' }, desc: 'お代は星のかけらで払う。' },
+];
+const GUEST_BY_ID = Object.fromEntries(GUESTS.map((g) => [g.id, g]));

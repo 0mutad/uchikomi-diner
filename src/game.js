@@ -16,6 +16,7 @@
       coins: 0,
       sales: 0,                 // 累計売上（次の国へ進む目標に使う予定）
       cooked: {},               // 料理ごとに作った数 { sushi: 3, ... }
+      guestsSeen: {},           // 来店したお客さんの数 { salaryman: 3, ... }（図鑑の人）
       upg: { fridge: 0, stove: 0, sign: 0, knife: 0 },
       today: { day: '', keys: 0 },
       totalKeys: 0,
@@ -55,6 +56,7 @@
         upg: { ...base.upg, ...s.upg },
         today: { ...base.today, ...s.today },
         cooked: { ...s.cooked },
+        guestsSeen: { ...s.guestsSeen },
         eng: loadEng(base.eng, s.eng),
       };
     } catch (e) { return fresh(); }
@@ -516,18 +518,103 @@
     return `${h}<div class="panel-body"><p class="hint" style="margin:0 0 4px">下のマップの枠をクリックしても選べます。</p>${rows}${more}${busy}</div>`;
   }
 
+  /* ---------- 📖 図鑑（料理／人のタブ） ----------
+   * 絵は仮（コードで描いたドット）。あとでPNGに差し替える */
+  let bookTab = 'dish';
+  let bookSel = null;          // 詳しく見ている料理
+
+  const imgCache = new Map();
+  function toImg(key, src, scale) {
+    if (imgCache.has(key)) return imgCache.get(key);
+    const c = document.createElement('canvas');
+    c.width = src.width * scale;
+    c.height = src.height * scale;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.drawImage(src, 0, 0, c.width, c.height);
+    const url = c.toDataURL();
+    imgCache.set(key, url);
+    return url;
+  }
+
+  // 料理の絵（仮）: どんぶり・お皿・串の3種類を、料理ごとの色で描く
+  const DISH_ART = {
+    bowl: ['................', '................', '...ffffffffff...', '..ffhfffffhfff..', '.ffffffffffffff.', '.rrrrrrrrrrrrrr.',
+      '..rrrrrrrrrrrr..', '..rRrrrrrrrrrr..', '...rrrrrrrrrr...', '....rrrrrrrr....', '.....dddddd.....', '................'],
+    plate: ['................', '................', '................', '......ffff......', '....ffhfffff....', '...ffffffffff...',
+      '..ffffffffffff..', '.wwffffffffffww.', 'wwwwwwwwwwwwwwww', '.wwwwwwwwwwwwww.', '..gggggggggggg..', '................'],
+    skewer: ['................', '................', '................', '..fff.fff.fff...', 'sfhffsfhffsfhffs', '..fff.fff.fff...',
+      '................', '.wwwwwwwwwwwwww.', 'wwwwwwwwwwwwwwww', '.gggggggggggggg.', '................', '................'],
+  };
+  const FOOD_COLORS = ['#e76f51', '#f4a261', '#e9c46a', '#8ab17d', '#c08457', '#d4a373', '#b5651d', '#f2d398', '#9c6644', '#e85d75', '#a3b18a', '#ddb892'];
+  function dishArtType(d) {
+    if (/yakitori|kushikatsu|dango|tebasaki/.test(d.ro)) return 'skewer';
+    if (/don$|ramen|udon|soba|men$|jiru|shiru|nabe|zosui|okayu|zuke|oden|chuka|imoni|hoto|mushi|yudofu|mizutaki|shabu|sukiyaki/.test(d.ro)) return 'bowl';
+    return 'plate';
+  }
+  function dishImg(d, scale = 3) {
+    let h = 0;
+    for (const ch of d.ro) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    const type = dishArtType(d);
+    const sprite = makeSprite(`dish|${d.id}`, DISH_ART[type], {
+      f: FOOD_COLORS[h % FOOD_COLORS.length], h: '#fff1d0', r: '#7a2e1d', R: '#a2533a', d: '#4a1a10',
+      w: '#f3ece2', g: '#c8c0b4', s: '#c99560',
+    });
+    return toImg(`dish|${d.id}|${scale}`, sprite, scale);
+  }
+  function guestImg(g, scale = 3) {
+    return toImg(`guest|${g.id}|${scale}`, personSprite(g.look, false, 'front'), scale);
+  }
+  const stars = (n) => `<span class="stars r${n}">${'★'.repeat(n)}<span class="off">${'★'.repeat(3 - n)}</span></span>`;
+
   function renderBook() {
+    const tabs = [['dish', '🍳 料理'], ['guest', '🧑 人']]
+      .map(([id, label]) => `<button class="tab${bookTab === id ? ' on' : ''}" data-act="book-tab" data-id="${id}">${label}</button>`).join('');
+
+    if (bookTab === 'guest') {
+      const met = GUESTS.filter((g) => state.guestsSeen[g.id]).length;
+      const rows = GUESTS.slice().sort((a, b) => a.rarity - b.rarity).map((g) => {
+        const n = state.guestsSeen[g.id] || 0;
+        return `<div class="guest-row${n ? '' : ' unknown'}">
+          <img class="pix" src="${guestImg(g)}" alt="">
+          <div class="name"><div class="ja">${n ? esc(g.name) : '？？？'}</div><div class="d">${n ? esc(g.desc) : 'まだ来ていない'}</div></div>
+          ${stars(g.rarity)}
+          <div class="count">${n ? `来店 ${n}回` : ''}</div>
+        </div>`;
+      }).join('');
+      return `${head('📖 図鑑', `人 ${met} / ${GUESTS.length}`)}<div class="tabs">${tabs}</div><div class="panel-body">${rows}</div>`;
+    }
+
     const made = DISHES.filter((d) => state.cooked[d.id]).length;
-    const list = DISHES.slice().sort((a, b) => a.price - b.price);
-    const rows = list.map((d) => {
+    const sub = `料理 ${made} / ${DISHES.length} 品 ・ 累計売上 🪙 ${state.sales.toLocaleString()}`;
+
+    // 料理をひとつ詳しく見る
+    if (bookSel) {
+      const d = DISH_BY_ID[bookSel];
       const n = state.cooked[d.id] || 0;
-      return `<div class="dish book-dish${n ? '' : ' unknown'}">
-        <div class="name"><div class="ja">${esc(d.ja)}${popular.ids.has(d.id) ? '<span class="tag pop">人気</span>' : ''}</div><div class="ro">${roHtml(d.ro)}</div></div>
-        <div class="count">${n ? `${n}皿` : '未作成'}</div>
-        <div class="price">🪙 ${sellPrice(d)}</div>
-      </div>`;
+      return `${head('📖 図鑑', sub)}<div class="tabs">${tabs}</div><div class="panel-body">
+        <div class="book-detail${n ? '' : ' unknown'}">
+          <img class="pix" src="${dishImg(d, 6)}" alt="">
+          <div>
+            <div class="t">${n ? esc(d.ja) : '？？？'}${popular.ids.has(d.id) ? '<span class="tag pop">人気</span>' : ''}</div>
+            <div class="ro">${roHtml(d.ro)}</div>
+            <div class="d">売値 🪙 ${sellPrice(d)} ・ ${n ? `${n}皿 作った` : 'まだ作っていない'}</div>
+          </div>
+        </div>
+        <p class="desc">${n ? esc(d.desc || '説明は準備中です。') : 'この料理を作ると説明が読めます。'}</p>
+      </div><div class="panel-foot"><span></span><button class="btn" data-act="book-back">← 一覧へ</button></div>`;
+    }
+
+    // 料理の一覧（横に4つ、縦にスクロール）
+    const cards = DISHES.map((d) => {
+      const n = state.cooked[d.id] || 0;
+      return `<button class="book-card${n ? '' : ' unknown'}" data-act="book-dish" data-id="${d.id}">
+        <img class="pix" src="${dishImg(d)}" alt="">
+        <div class="ja">${n ? esc(d.ja) : '？？？'}</div>
+        <div class="ro">${d.ro}</div>
+      </button>`;
     }).join('');
-    return `${head('図鑑 🇯🇵 日本', `${made} / ${DISHES.length} 品 ・ 累計売上 🪙 ${state.sales.toLocaleString()}`)}<div class="panel-body">${rows}</div>`;
+    return `${head('📖 図鑑', sub)}<div class="tabs">${tabs}</div><div class="panel-body"><div class="book-grid">${cards}</div></div>`;
   }
 
   function renderCook() {
@@ -622,6 +709,9 @@
     else if (act === 'plus') { cart.set(id, (cart.get(id) || 0) + 1); renderPanel(); }
     else if (act === 'minus') { cart.set(id, Math.max(0, (cart.get(id) || 0) - 1)); renderPanel(); }
     else if (act === 'cook') cook();
+    else if (act === 'book-tab') { bookTab = id; bookSel = null; renderPanel(); }
+    else if (act === 'book-dish') { bookSel = id; renderPanel(); }
+    else if (act === 'book-back') { bookSel = null; renderPanel(); }
     else if (act === 'buy') {
       if (serving) return;   // 営業中は受け取り前のお金があるので買えない
       const u = UPGRADES.find((x) => x.id === id);
@@ -813,14 +903,6 @@
   }
 
   const CHEF_LOOK = { skin: '#f2c9a0', hair: '#3a2619', shirt: '#ffffff', pants: '#3b3b46' };
-  const GUEST_LOOKS = [
-    { skin: '#f2c9a0', hair: '#3a2619', shirt: '#4f7cac', pants: '#2c3e50' },
-    { skin: '#e8b98f', hair: '#1f1a17', shirt: '#6a994e', pants: '#3d405b' },
-    { skin: '#f6d5b5', hair: '#a0522d', shirt: '#e9c46a', pants: '#264653' },
-    { skin: '#d9a77c', hair: '#2b2b2b', shirt: '#b56576', pants: '#355070' },
-    { skin: '#f2c9a0', hair: '#c9c9c9', shirt: '#8d6e63', pants: '#424242' },
-    { skin: '#eac8a4', hair: '#5c3d2e', shirt: '#9b5de5', pants: '#22223b' },
-  ];
   // 料理の色（見分け用。ドット絵になったら料理ごとの絵にする）
   const dishColor = (d) => ['#e76f51', '#f4a261', '#e9c46a', '#8ab17d', '#c08457', '#d4a373'][d.ro.length % 6];
 
@@ -988,7 +1070,13 @@
     return [x, y + d, 0, 1];   // 最後尾より後ろは入口の外
   }
 
-  const randomLook = () => GUEST_LOOKS[Math.floor(Math.random() * GUEST_LOOKS.length)];
+  // 来るお客さんを決める。まずレア度を引いて、そのレア度の人から1人
+  function pickGuest() {
+    const roll = Math.random();
+    const rarity = roll < RARITY_RATE[3] ? 3 : roll < RARITY_RATE[3] + RARITY_RATE[2] ? 2 : 1;
+    const pool = GUESTS.filter((g) => g.rarity === rarity);
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
 
   function startServe(rows) {
     orders = [];
@@ -1046,7 +1134,8 @@
     // お客さんが入口から入ってきて、行列の最後に並ぶ
     spawnWait -= dt;
     if (pending > 0 && queue.length < QUEUE_MAX && spawnWait <= 0) {
-      const g = { look: randomLook(), state: 'queue', d: QUEUE_LEN + 40, path: [], face: -1, walk: 0 };
+      const type = pickGuest();
+      const g = { type, look: type.look, state: 'queue', d: QUEUE_LEN + 40, path: [], face: -1, walk: 0 };
       [g.x, g.y] = queuePos(g.d);
       queue.push(g);
       guests.push(g);
@@ -1095,6 +1184,10 @@
           const price = sellPrice(g.dish);
           unpaid = Math.max(0, unpaid - price);
           served++;
+          // 図鑑の「人」に記録。初めて来た人は名前を出す
+          const first = !state.guestsSeen[g.type.id];
+          state.guestsSeen[g.type.id] = (state.guestsSeen[g.type.id] || 0) + 1;
+          if (first) floatText(`図鑑に追加：${'★'.repeat(g.type.rarity)} ${g.type.name}`, 300, 40, '#9ad1ff', '');
           floatText(`+${price}`, g.table.x, g.table.y - 18);
           g.table.dish = null;
           g.table.guest = null;
@@ -1207,6 +1300,7 @@
         person(g.x, g.y, g.look, { walk: sit ? 0 : g.walk, dir: g.dir, sit, face: g.face,
           carry: g.state === 'toSeat' ? { color: dishColor(g.dish) } : null });
         if (sit && Math.sin(t * 12) > 0) rect(g.x + 8, g.y - 14, 2, 2, '#ffffff');
+        if (g.type && g.type.rarity >= 2) text('★'.repeat(g.type.rarity - 1), g.x, g.y - 26 + Math.sin(t * 4) * 1.5, { size: 8, bold: true, align: 'center', color: g.type.rarity === 3 ? '#ffd166' : '#d8dde6' });
       } });
     }
     items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
